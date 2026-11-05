@@ -1,5 +1,7 @@
 package re.leob.openbotavatar.kt
 
+import re.leob.openbotavatar.kt.geometry.fixed
+
 /** 2D affine matrix in SVG order: x' = a x + c y + e, y' = b x + d y + f. */
 public data class AvatarMatrix(
     val a: Double,

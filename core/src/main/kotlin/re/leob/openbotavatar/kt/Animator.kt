@@ -1,5 +1,6 @@
 package re.leob.openbotavatar.kt
 
+import re.leob.openbotavatar.kt.geometry.smoothstep
 import kotlin.math.abs
 import kotlin.math.exp
 import kotlin.math.hypot
@@ -11,10 +12,7 @@ import kotlin.math.tanh
 public const val MOOD_MS: Double = 420.0
 
 /** Eased progress of a mood change from elapsed time. */
-public fun moodProgress(elapsedMs: Double): Double {
-    val x = clamp(elapsedMs / MOOD_MS, 0.0, 1.0)
-    return x * x * (3 - 2 * x)
-}
+public fun moodProgress(elapsedMs: Double): Double = smoothstep(elapsedMs / MOOD_MS)
 
 /**
  * What a new mood change eases in from: the mood on screen with any change under way frozen at its
@@ -76,7 +74,6 @@ public fun followStep(
     val goal = if (target != null) FollowState(target.x, target.y, 1.0) else FollowState.REST
     val step = max(0.0, min(dt, 0.1))
     fun ease(tau: Double) = if (reduced) 1.0 else 1 - exp(-step / tau)
-    // Losing the target relaxes the look at the unhurried attention rate, as one movement.
     val k = ease(if (target != null) LOOK_TAU else ATTEND_TAU)
     val next = FollowState(
         state.x + (goal.x - state.x) * k,
@@ -88,10 +85,8 @@ public fun followStep(
 }
 
 /** The pose's look target for a follow state: none at rest, else attention through a smoothstep as weight. */
-public fun followGaze(state: FollowState): AvatarGaze? {
-    val a = clamp(state.attention, 0.0, 1.0)
-    return if (a > 0) AvatarGaze(state.x, state.y, a * a * (3 - 2 * a)) else null
-}
+public fun followGaze(state: FollowState): AvatarGaze? =
+    if (state.attention > 0) AvatarGaze(state.x, state.y, smoothstep(state.attention)) else null
 
 public data class AnimatorStep(
     val gaze: AvatarGaze?,
@@ -129,7 +124,6 @@ public class AvatarAnimator {
             moving = stillMoving
         }
 
-        // A new mood eases in from the pose on screen, a change under way included.
         val current = shown
         if (current != null && mood != current.mood) {
             val frozen = current.blend?.let { AvatarMoodBlend(it.from, moodProgress(now - current.since)) }

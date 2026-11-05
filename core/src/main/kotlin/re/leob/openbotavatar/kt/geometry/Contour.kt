@@ -1,6 +1,5 @@
 package re.leob.openbotavatar.kt.geometry
 
-import re.leob.openbotavatar.kt.fixed
 import kotlin.math.abs
 import kotlin.math.hypot
 
@@ -58,7 +57,6 @@ internal fun contourLoops(field: Field, level: Double): List<List<Point>> {
             val right = 2 * (j * nx + i + 1) + 1
             if (code == 10 || code == 5) {
                 val center = (at(i, j) + at(i + 1, j) + at(i + 1, j + 1) + at(i, j + 1)) / 4 >= 0
-                // Diagonal corners: the center decides whether they connect through the cell.
                 if ((code == 10) == center) {
                     link(top, right)
                     link(bottom, left)
@@ -82,15 +80,11 @@ internal fun contourLoops(field: Field, level: Double): List<List<Point>> {
     for (start in links.keys) {
         if (start in seen) continue
         val loop = ArrayList<Point>()
-        var prev = -1
         var cur = start
         while (cur !in seen) {
             seen.add(cur)
             loop.add(points.getValue(cur))
-            val previous = prev
-            val next = links.getValue(cur).firstOrNull { it != previous && it !in seen } ?: break
-            prev = cur
-            cur = next
+            cur = links.getValue(cur).firstOrNull { it !in seen } ?: break
         }
         if (loop.size >= 3) loops.add(loop)
     }
@@ -108,7 +102,6 @@ private fun perpendicular(p: Point, a: Point, b: Point): Double {
 /** Ramer-Douglas-Peucker on a closed loop. */
 internal fun simplifyLoop(loop: List<Point>, tolerance: Double): List<Point> {
     if (loop.size <= 8) return loop
-    // Split at the point farthest from the first so the closed loop becomes two open chains.
     var far = 0
     var best = -1.0
     for (k in 1 until loop.size) {
@@ -145,7 +138,6 @@ internal fun simplifyLoop(loop: List<Point>, tolerance: Double): List<Point> {
     return loop.filterIndexed { k, _ -> keep[k] }
 }
 
-/** Compact closed path from loops, for the evenodd fill rule. */
 internal fun loopsToPath(loops: List<List<Point>>): String = buildString {
     for (loop in loops) {
         append("M${fixed(loop[0].x, 1)} ${fixed(loop[0].y, 1)}L")

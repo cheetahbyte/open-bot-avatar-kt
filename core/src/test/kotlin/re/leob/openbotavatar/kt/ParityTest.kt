@@ -2,10 +2,10 @@ package re.leob.openbotavatar.kt
 
 import java.util.zip.GZIPInputStream
 import kotlin.math.abs
+import kotlin.math.pow
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
-import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.boolean
 import kotlinx.serialization.json.booleanOrNull
@@ -16,6 +16,8 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertSame
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -67,13 +69,18 @@ class ParityTest {
 
     private val number = Regex("-?\\d+(?:\\.\\d+)?")
 
+    private fun lastDigit(token: String) = 10.0.pow(-token.substringAfter('.', "").length)
+
     /** Equal text, except that numbers may differ in their last rounded digit: libm results vary by an ulp. */
     private fun assertSameMarkup(context: String, expected: String, actual: String) {
-        val a = number.findAll(expected).map { it.value.toDouble() }.toList()
-        val b = number.findAll(actual).map { it.value.toDouble() }.toList()
+        val a = number.findAll(expected).map { it.value }.toList()
+        val b = number.findAll(actual).map { it.value }.toList()
         assertEquals("$context: markup", expected.replace(number, "#"), actual.replace(number, "#"))
         assertEquals("$context: number count", a.size, b.size)
-        for (i in a.indices) assertTrue("$context: number $i, ${a[i]} vs ${b[i]}", abs(a[i] - b[i]) <= 0.1001)
+        for (i in a.indices) {
+            val digit = minOf(0.1, lastDigit(a[i]), lastDigit(b[i]))
+            assertTrue("$context: number $i, ${a[i]} vs ${b[i]}", abs(a[i].toDouble() - b[i].toDouble()) <= digit * 1.001)
+        }
     }
 
     @Test
@@ -157,11 +164,13 @@ class ParityTest {
             assertEquals(e.getValue("moving").jsonPrimitive.boolean, step.moving)
             val gaze = e["gaze"] as? JsonObject
             assertEquals(gaze == null, step.gaze == null)
+            assertEquals(e["motionBlend"] == null, step.moodBlend == null)
             if (gaze != null) {
                 assertEquals(gaze.number("x")!!, step.gaze!!.x, 1e-9)
+                assertEquals(gaze.number("y")!!, step.gaze.y, 1e-9)
                 assertEquals(gaze.number("weight")!!, step.gaze.weight!!, 1e-9)
             }
-            assertEquals(blendOf(e["motionBlend"]?.takeUnless { it is JsonNull })?.t, step.moodBlend?.t)
+            assertEquals(blendOf(e["motionBlend"])?.t, step.moodBlend?.t)
         }
     }
 
@@ -180,12 +189,23 @@ class ParityTest {
     }
 
     @Test
-    fun catalogMatchesUpstreamAndBuildsAreCached() {
+    fun catalogMatchesUpstream() {
         assertEquals(definitions.keys, AvatarCatalog.all.map { it.id }.toSet())
         for (entry in AvatarCatalog.all) assertTrue(entry.id, validateAvatar(entry) is ValidationResult.Valid)
         assertEquals("#f4f4f4", AvatarCatalog.color("mug"))
         assertEquals(DEFAULT_COLOR, AvatarCatalog.color("unknown"))
+    }
+
+    @Test
+    fun aPreparedAvatarIsReadyWithoutRebuilding() {
         val mug = AvatarCatalog.definition("mug")!!
-        assertTrue(PreparedAvatar.of(mug) === PreparedAvatar.of(mug))
+        assertSame(PreparedAvatar.of(mug), PreparedAvatar.cached(mug))
+    }
+
+    @Test
+    fun anInvalidDefinitionThrowsWithItsErrors() {
+        val invalid = AvatarCatalog.definition("mug")!!.copy(id = "Not A Slug")
+        val error = assertThrows(InvalidAvatarException::class.java) { PreparedAvatar.of(invalid) }
+        assertEquals(listOf("id must be a lowercase slug of 1-40 chars [a-z0-9-]"), error.errors)
     }
 }

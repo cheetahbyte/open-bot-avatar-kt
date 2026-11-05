@@ -45,7 +45,6 @@ public fun AvatarPointerArea(
     }
 }
 
-/** Follows mouse and touch; a lifted finger or pen has no position any more. [origin] may read state. */
 internal fun Modifier.trackAvatarPointer(pointer: AvatarPointerState, origin: () -> Offset): Modifier =
     pointerInput(pointer) {
         awaitPointerEventScope {

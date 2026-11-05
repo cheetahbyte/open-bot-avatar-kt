@@ -29,6 +29,10 @@ Then include it as a composite build in your `settings.gradle.kts` file:
 includeBuild("../open-bot-avatar-kt")
 ```
 
+The included build doesn't read your project's `local.properties` file, so it needs its own Android
+SDK location. Set the `ANDROID_HOME` environment variable, or add a `local.properties` file to the
+library checkout.
+
 Add the dependency to your app module:
 
 ```kotlin
@@ -137,7 +141,7 @@ use `AvatarAnimator` and `computePose` for finer control.
 
 ## Development
 
-Building requires JDK 17 or later and Android SDK 36.
+Building requires JDK 17 to 25 and Android SDK 36. The `compose` module fails on JDK 27.
 
 ```sh
 ./gradlew build

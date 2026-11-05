@@ -1,13 +1,10 @@
 package re.leob.openbotavatar.kt.geometry
 
-import re.leob.openbotavatar.kt.fixed
-import re.leob.openbotavatar.kt.plain
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.ceil
 import kotlin.math.cos
-import kotlin.math.floor
 import kotlin.math.max
 import kotlin.math.sin
 import kotlin.math.sqrt
@@ -17,10 +14,6 @@ import kotlin.math.sqrt
  * absolute and relative, and nothing else. Output is re-serialized from numbers, so model-written
  * text never reaches a renderer.
  */
-internal data class Point(val x: Double, val y: Double)
-
-internal typealias Polygons = List<List<Point>>
-
 internal sealed interface Segment {
     data class Move(val x: Double, val y: Double) : Segment
     data class Line(val x: Double, val y: Double) : Segment
@@ -30,11 +23,9 @@ internal sealed interface Segment {
     data object Close : Segment
 }
 
-internal data class Bounds(val minX: Double, val minY: Double, val maxX: Double, val maxY: Double)
-
 internal class PathError(message: String) : Exception(message)
 
-internal object PathLimits {
+private object PathLimits {
     const val MAX_CHARS = 6000
     const val MAX_SEGMENTS = 400
     const val MAX_SUBPATHS = 16
@@ -69,7 +60,6 @@ private fun tokenize(d: String): List<Token> {
     return tokens
 }
 
-/** Parse and convert to absolute move, line, cubic, quad, arc and close segments. */
 internal fun parsePath(d: String): List<Segment> {
     if (d.isBlank()) throw PathError("path is empty")
     if (d.length > PathLimits.MAX_CHARS) throw PathError("path longer than ${PathLimits.MAX_CHARS} characters")
@@ -217,7 +207,6 @@ private fun coordinates(s: Segment): DoubleArray = when (s) {
 
 private fun fmt(n: Double): String = fixed(n, 2)
 
-/** Compact absolute serialization built only from parsed numbers. */
 internal fun serializePath(segments: List<Segment>): String = buildString {
     for (s in segments) {
         when (s) {
@@ -250,8 +239,6 @@ private fun sampleArc(x0: Double, y0: Double, s: Segment.Arc, out: MutableList<P
     val dy = (y0 - y) / 2
     val x1p = cos * dx + sin * dy
     val y1p = -sin * dx + cos * dy
-    rx = abs(rx)
-    ry = abs(ry)
     val lambda = (x1p * x1p) / (rx * rx) + (y1p * y1p) / (ry * ry)
     if (lambda > 1) {
         val k = sqrt(lambda)
@@ -280,7 +267,6 @@ private fun sampleArc(x0: Double, y0: Double, s: Segment.Arc, out: MutableList<P
     }
 }
 
-/** Flatten into closed polygons, one per subpath. */
 internal fun flattenPath(segments: List<Segment>): Polygons {
     val polys = ArrayList<List<Point>>()
     var cur = ArrayList<Point>()
@@ -330,11 +316,9 @@ internal fun flattenPath(segments: List<Segment>): Polygons {
                 py = s.y
             }
             Segment.Close -> {
-                if (cur.isNotEmpty()) {
-                    polys.add(cur)
-                    px = cur[0].x
-                    py = cur[0].y
-                }
+                polys.add(cur)
+                px = cur[0].x
+                py = cur[0].y
                 cur = ArrayList()
             }
         }
@@ -343,94 +327,6 @@ internal fun flattenPath(segments: List<Segment>): Polygons {
     return polys.filter { it.size >= 3 }
 }
 
-/** Nonzero winding number of a point against all subpaths. */
-private fun winding(polys: Polygons, x: Double, y: Double): Int {
-    var w = 0
-    for (poly in polys) {
-        var j = poly.size - 1
-        for (i in poly.indices) {
-            val pi = poly[i]
-            val pj = poly[j]
-            val cross = (pi.x - pj.x) * (y - pj.y) - (x - pj.x) * (pi.y - pj.y)
-            if (pj.y <= y) {
-                if (pi.y > y && cross > 0) w++
-            } else if (pi.y <= y && cross < 0) {
-                w--
-            }
-            j = i
-        }
-    }
-    return w
-}
-
-internal fun isInside(polys: Polygons, x: Double, y: Double): Boolean = winding(polys, x, y) != 0
-
-/** Nonzero inside flags for many points on one row (`xs` ascending), from one pass over the edges. */
-internal fun insideRow(polys: Polygons, y: Double, xs: DoubleArray, out: BooleanArray) {
-    val hitX = ArrayList<Double>()
-    val hitW = ArrayList<Int>()
-    for (poly in polys) {
-        var j = poly.size - 1
-        for (i in poly.indices) {
-            val a = poly[j]
-            val b = poly[i]
-            if (a.y <= y && b.y > y) {
-                hitX.add(a.x + ((y - a.y) * (b.x - a.x)) / (b.y - a.y))
-                hitW.add(1)
-            } else if (b.y <= y && a.y > y) {
-                hitX.add(a.x + ((y - a.y) * (b.x - a.x)) / (b.y - a.y))
-                hitW.add(-1)
-            }
-            j = i
-        }
-    }
-    val order = hitX.indices.sortedBy { hitX[it] }
-    var w = 0
-    var h = 0
-    for (k in xs.indices) {
-        while (h < order.size && hitX[order[h]] < xs[k]) w += hitW[order[h++]]
-        out[k] = w != 0
-    }
-}
-
-internal fun bounds(polys: Polygons): Bounds {
-    var minX = Double.POSITIVE_INFINITY
-    var minY = Double.POSITIVE_INFINITY
-    var maxX = Double.NEGATIVE_INFINITY
-    var maxY = Double.NEGATIVE_INFINITY
-    for (poly in polys) for (p in poly) {
-        if (p.x < minX) minX = p.x
-        if (p.y < minY) minY = p.y
-        if (p.x > maxX) maxX = p.x
-        if (p.y > maxY) maxY = p.y
-    }
-    return Bounds(minX, minY, maxX, maxY)
-}
-
-/** Sample positions from [start] by [step] while below [end], added up as upstream does. */
-internal fun sampleRange(start: Double, end: Double, step: Double): DoubleArray {
-    val out = ArrayList<Double>()
-    var v = start
-    while (v < end) {
-        out.add(v)
-        v += step
-    }
-    return out.toDoubleArray()
-}
-
-/** Filled area estimated on a 1-unit sample grid (nonzero rule). */
-internal fun filledArea(polys: Polygons, b: Bounds): Int {
-    var n = 0
-    val xs = sampleRange(floor(b.minX) + 0.5, b.maxX, 1.0)
-    val row = BooleanArray(xs.size)
-    for (y in sampleRange(floor(b.minY) + 0.5, b.maxY, 1.0)) {
-        insideRow(polys, y, xs, row)
-        for (inside in row) if (inside) n++
-    }
-    return n
-}
-
-/** Split normalized segments into one segment list per subpath. */
 internal fun splitSubpaths(segments: List<Segment>): List<List<Segment>> {
     val out = ArrayList<MutableList<Segment>>()
     for (s in segments) {

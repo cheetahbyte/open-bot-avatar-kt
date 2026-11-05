@@ -45,11 +45,10 @@ public class AvatarPlayer {
                 moodBlend = step.moodBlend,
                 reducedMotion = reducedMotion,
             ),
-            renderedSize = size.takeIf { it > 0 },
+            renderedSize = size,
         )
-        val more = !reducedMotion || step.moving
         val wait = when {
-            !more -> null
+            reducedMotion -> null
             size > 0 && size < SMALL_SIZE -> 1 / SMALL_FPS - FRAME_SLACK
             else -> 0.0
         }

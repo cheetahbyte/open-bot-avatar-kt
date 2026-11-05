@@ -6,6 +6,8 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.SemanticsProperties
@@ -95,23 +97,31 @@ class BotAvatarRenderTest {
     }
 
     @Test
-    fun liveAvatarAnimatesIntoTheNewMood() {
+    fun liveAvatarRedrawsForANewMood() {
         val mood = mutableStateOf(AvatarMood.IDLE)
         rule.setContent {
             Box(Modifier.size(240.dp)) {
-                BotAvatar(mug, Modifier.size(240.dp), color = red, eyeColor = Color.Black, mood = mood.value)
+                BotAvatar(
+                    mug,
+                    Modifier.size(240.dp),
+                    color = red,
+                    eyeColor = Color.Black,
+                    mood = mood.value,
+                    reducedMotion = AvatarReducedMotion.On,
+                )
             }
         }
         val idle = capture("live-idle")
         assertTrue(idle.count(red) > 1000)
-        mood.value = AvatarMood.HAPPY
-        rule.mainClock.advanceTimeBy(1000)
+        rule.runOnUiThread { mood.value = AvatarMood.HAPPY }
+        rule.mainClock.advanceTimeByFrame()
+        rule.waitForIdle()
         val happy = capture("live-happy")
         assertFalse(idle.sameAs(happy))
     }
 
     @Test
-    fun turnedSidewaysItDrawsTheSideStack() {
+    fun aSidewaysViewStillDrawsABody() {
         showStill(view = AvatarView(yaw = 1.6, pitch = 0.0))
         assertTrue(capture("side").count(red) > 1000)
     }
@@ -122,6 +132,19 @@ class BotAvatarRenderTest {
         val image = capture("back")
         assertTrue(image.count(red) > 1000)
         assertEquals(0, image.count(Color.Black))
+    }
+
+    @Test
+    fun aPointerOnTheDrawnEyesInAWideBoxIsLevelWithThem() {
+        val eyes = mug.eyes
+        val look = lookFrom(
+            position = Offset(100f + eyes.x.toFloat(), eyes.y.toFloat()),
+            bounds = Rect(0f, 0f, 300f, 100f),
+            eyes = eyes,
+            density = 1f,
+        )
+        assertEquals(0.0, look.x, 1e-3)
+        assertEquals(0.0, look.y, 1e-3)
     }
 
     @Test

@@ -1,5 +1,8 @@
 package re.leob.openbotavatar.kt
 
+import re.leob.openbotavatar.kt.geometry.clamp
+import re.leob.openbotavatar.kt.geometry.fixed
+
 private fun f(n: Double) = fixed(n, 2)
 
 private fun AvatarMatrix.css(): String =
