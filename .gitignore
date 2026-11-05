@@ -25,3 +25,13 @@ replay_pid*
 
 # Kotlin Gradle plugin data, see https://kotlinlang.org/docs/whatsnew20.html#new-directory-for-kotlin-data-in-gradle-projects
 .kotlin/
+
+# Keep the wrapper: the template above ignores every jar
+!gradle/wrapper/gradle-wrapper.jar
+
+.gradle/
+build/
+local.properties
+.DS_Store
+*.iml
+.idea/
