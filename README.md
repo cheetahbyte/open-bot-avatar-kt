@@ -17,29 +17,51 @@ Requirements: Android 7.0 (API level 24) or later, and Java 17 bytecode support.
 
 ## Add the library
 
-The library isn't published to a Maven repository. Clone it next to your project:
+The library isn't published to a Maven repository. Gradle can build it from this Git repository,
+or you can include a checkout.
 
-```sh
-git clone https://github.com/cheetahbyte/open-bot-avatar-kt.git
-```
+### Build from Git
 
-Then include it as a composite build in your `settings.gradle.kts` file:
+This option needs no checkout, and Gradle clones the release tag for you. Add the repository to
+your `settings.gradle.kts` file:
 
 ```kotlin
-includeBuild("../open-bot-avatar-kt")
+sourceControl {
+    gitRepository(uri("https://github.com/cheetahbyte/open-bot-avatar-kt.git")) {
+        producesModule("re.leob.openbotavatar.kt:open-bot-avatar-core")
+        producesModule("re.leob.openbotavatar.kt:open-bot-avatar-compose")
+    }
+}
 ```
 
-The included build doesn't read your project's `local.properties` file, so it needs its own Android
-SDK location. Set the `ANDROID_HOME` environment variable, or add a `local.properties` file to the
-library checkout.
-
-Add the dependency to your app module:
+Then add the dependency to your app module:
 
 ```kotlin
 dependencies {
     implementation("re.leob.openbotavatar.kt:open-bot-avatar-compose:0.1.0")
 }
 ```
+
+This option has the following limits:
+
+- Gradle turns off the configuration cache for your whole build.
+- You must set the `ANDROID_HOME` environment variable. Your project's `local.properties` file isn't used.
+- You can pin a tag or a branch, but not a commit.
+
+### Include a checkout
+
+This option keeps the configuration cache and can pin any commit. Add the library as a Git submodule,
+then include it in your `settings.gradle.kts` file:
+
+```kotlin
+includeBuild("third_party/open-bot-avatar-kt")
+```
+
+The included build doesn't read your project's `local.properties` file, so it needs its own Android
+SDK location. Set the `ANDROID_HOME` environment variable, or add a `local.properties` file to the
+library checkout.
+
+Add the same dependency to your app module.
 
 ## Show an avatar
 
