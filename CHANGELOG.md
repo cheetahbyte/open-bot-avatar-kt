@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- Track Open Bot Avatar 0.3.0 at commit `5e64c081971eb296f562544641bad37d40fb36b6`; keep portable definition contract version 1.
+- Port 0.2.1 smooth cross-sections, relative curve serialization, rounded side sections, and edge-aware slice selection.
+- Separate six runtime states from neutral and happy moods; retain deprecated idle and thinking mood calls.
+- Preserve the state clock through mood-only changes, including interrupted transitions and done-state mounting behavior.
+- Morph numeric eye outlines between pills, arcs, and waiting slits.
+- Add body shrink, replacement marks, and layered ribbons with silhouette-aware hoops and OKLCH color gradients.
+- Render effects in SVG and Compose, with live theme colors and reduced-motion behavior.
+- Regenerate the catalog and revision-tagged parity fixtures; expand JVM state, frame, eye, and Skia rendering tests.
+
 ## 0.1.0
 
 - Port the Open Bot Avatar 0.2.0 engine to Kotlin: validation, volume, poses, frames, and SVG output.

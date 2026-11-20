@@ -1,10 +1,11 @@
 # Open Bot Avatar for Android
 
 A Kotlin and Jetpack Compose adaptation of [Open Bot Avatar](https://github.com/DominikScholz/open-bot-avatar).
-An avatar is one SVG silhouette and an eye placement. The renderer adds volume, blinking, gaze, and moods.
+An avatar is one SVG silhouette and an eye placement. The renderer adds volume, gaze, states, moods, and effects.
 
 This library reads the same definitions as the TypeScript package and produces the same frames.
-It tracks version 0.2.0 of the upstream package.
+It tracks upstream version 0.3.0 at commit [`5e64c08`](https://github.com/DominikScholz/open-bot-avatar/commit/5e64c081971eb296f562544641bad37d40fb36b6).
+The portable definition remains contract version 1.
 
 ## Modules
 
@@ -72,6 +73,7 @@ BotAvatar(
     definition = AvatarCatalog.definition("mug")!!,
     modifier = Modifier.size(96.dp),
     color = MaterialTheme.colorScheme.primary,
+    state = AvatarState.WORKING,
     mood = AvatarMood.HAPPY,
 )
 ```
@@ -85,7 +87,9 @@ Later uses of a recent definition appear at once.
 | --- | --- |
 | `definition` | Required. Validate imported data first. |
 | `color`, `eyeColor` | Compose colors. Theme colors work and update live. |
-| `mood` | `IDLE` (default), `THINKING`, or `HAPPY`. Changes ease from the current pose. |
+| `state` | `IDLE` (default), `THINKING`, `WORKING`, `WAITING`, `BLOCKED`, or `DONE`. Changes ease from the current pose. |
+| `mood` | `NEUTRAL` (default) or `HAPPY`, independent of the state. Eyes morph between looks. |
+| `stateAge` | Optional elapsed seconds in the state. Live avatars track this automatically; mood-only changes preserve the clock. |
 | `depth` | Volume from 0 (flat) to 14. The default is 6. |
 | `followPointer` | Look and turn toward touches and the mouse. The default is `false`. |
 | `lookAt` | A fixed `LookDirection`, each axis from -1 to 1. Overrides the pointer. |
@@ -94,6 +98,22 @@ Later uses of a recent definition appear at once.
 | `reducedMotion` | `System` (default), `On`, or `Off`. `System` turns on when animations are turned off in the system settings. |
 | `still` | Draw one calm frame and never animate. Use it for thumbnails and lists. |
 | `label` | Accessible name. The default is the definition's name. `""` marks the avatar as decorative. |
+
+### States and moods
+
+Thinking replaces the body with three hopping dots. Blocked replaces it with an exclamation mark.
+Working periodically sweeps ribbons around the body. Done celebrates with turns and ribbons, then rests before repeating.
+Waiting has slit eyes; a happy mood replaces them with arcs. Happy idle avatars also hop.
+Reduced motion freezes body motion and marks, stops blinking, and hides ribbons.
+
+An avatar mounted in `DONE` starts at rest. A later transition into `DONE` starts its celebration immediately.
+For deterministic exports, pass `FrameOptions(state = AvatarState.DONE, stateAge = 1.2)`.
+Without `stateAge`, exported done avatars rest.
+
+Existing `mood = AvatarMood.IDLE` and `mood = AvatarMood.THINKING` calls still work but are deprecated.
+Replace them with `state = AvatarState.IDLE` or `state = AvatarState.THINKING`; use `AvatarMood.NEUTRAL` for the mood.
+The legacy `AvatarMotion` option also remains available. Explicit state and mood take precedence over it.
+Recompile consumers after updating: the expanded pose and frame models aren't binary-compatible with 0.1.0.
 
 ## Use the catalog
 
@@ -148,13 +168,21 @@ val svg = avatar.svg(FrameOptions(color = "#1fbf68", mood = AvatarMood.HAPPY), s
 val frame = avatar.frame(FrameOptions(time = 1.2))
 ```
 
-`AvatarFrame` lists paths and transforms from back to front, for custom renderers. In Compose,
-`DrawScope.drawAvatarFrame` paints one. To drive your own animation host, use `AvatarPlayer`, or
-use `AvatarAnimator` and `computePose` for finer control.
+`AvatarFrame` lists paths and transforms from back to front, for custom renderers.
+Draw slices in `color`, eyes in `ink`, and ribbon pieces with their user-space linear gradients.
+Eyes can be pills, stroked arcs, or filled paths. Marks use ordinary slices.
+The supplied matrices keep ribbons and marks independent of the body's root motion.
+In Compose, `DrawScope.drawAvatarFrame` paints the frame.
+When computing frames yourself, pass the same body color into `FrameOptions.color` and `drawAvatarFrame`.
+Ribbon palettes are generated before painting.
+
+To drive your own animation host, use `AvatarPlayer`, or use `AvatarAnimator` and `computePose` for finer control.
+Keep one player per on-screen avatar. It preserves state age through mood changes and definition replacements.
+Compose forwards your current body color before generating ribbon palettes, so gradients follow theme changes.
 
 ## Differences from the TypeScript package
 
-- `AvatarMood` replaces both `mood` and `motion`, and enum values replace strings.
+- `AvatarState`, `AvatarMood`, and the legacy `AvatarMotion` use enum values instead of strings.
 - Colors in `BotAvatar` are Compose colors, which replace CSS colors.
 - `renderAvatarScene`, `sceneFrame`, and `renderer: "scene"` are left out because they target CSS 3D.
 - `avatarExtent` and bitmap fitting are left out because Compose draws without an intermediate bitmap.
@@ -171,7 +199,8 @@ Building requires JDK 17 to 25 and Android SDK 36. The `compose` module fails on
 
 The tests run without an emulator:
 
-- `ParityTest` compares validation, poses, animation, and SVG output with fixtures from the TypeScript engine.
+- `ParityTest` compares validation, numeric eye outlines, full frames, poses, state clocks, and SVG output with TypeScript fixtures.
+- `AvatarPlayerTest` checks legacy calls, state transitions, replacement marks, ribbon stacking, colors, and reduced motion.
 - `BotAvatarRenderTest` draws the composable through Skia with Robolectric. Renders are saved in `compose/build/renders`.
 
 To update to a new upstream version, regenerate `AvatarCatalogData.kt` and the fixtures. Replace
@@ -183,6 +212,8 @@ node scripts/sync-upstream.ts UPSTREAM_PATH
 ```
 
 The script requires a Node.js version that runs TypeScript directly (22.18 or later).
+Fixtures record the upstream package version and Git revision.
+They cover all state and mood combinations, legacy options, interrupted transitions, and ribbon gradients.
 
 ## License
 

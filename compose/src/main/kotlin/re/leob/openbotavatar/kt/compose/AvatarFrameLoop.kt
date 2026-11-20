@@ -7,13 +7,20 @@ import androidx.compose.runtime.withFrameNanos
 import kotlinx.coroutines.flow.first
 import re.leob.openbotavatar.kt.AvatarFrame
 import re.leob.openbotavatar.kt.AvatarMood
+import re.leob.openbotavatar.kt.AvatarState
+import re.leob.openbotavatar.kt.AvatarMotion
 import re.leob.openbotavatar.kt.AvatarPlayer
 import re.leob.openbotavatar.kt.AvatarView
 import re.leob.openbotavatar.kt.LookDirection
 import re.leob.openbotavatar.kt.PreparedAvatar
 
 internal data class LiveInput(
-    val mood: AvatarMood,
+    val mood: AvatarMood?,
+    val state: AvatarState?,
+    val motion: AvatarMotion?,
+    val stateAge: Double?,
+    val color: String,
+    val eyeColor: String,
     val target: LookDirection?,
     val holdGaze: Boolean,
     val view: AvatarView?,
@@ -48,6 +55,11 @@ internal suspend fun runFrameLoop(
                 nowMs = nanos / 1e6,
                 time = time,
                 mood = current.mood,
+                state = current.state,
+                motion = current.motion,
+                stateAge = current.stateAge,
+                color = current.color,
+                eyeColor = current.eyeColor,
                 target = current.target,
                 holdGaze = current.holdGaze,
                 view = current.view,

@@ -28,20 +28,30 @@ public class AvatarPlayer {
         avatar: PreparedAvatar,
         nowMs: Double,
         time: Double,
-        mood: AvatarMood = AvatarMood.IDLE,
+        mood: AvatarMood? = null,
         target: LookDirection? = null,
         holdGaze: Boolean = false,
         view: AvatarView? = null,
         reducedMotion: Boolean = false,
         size: Double,
+        state: AvatarState? = null,
+        motion: AvatarMotion? = null,
+        stateAge: Double? = null,
+        color: String? = null,
+        eyeColor: String? = null,
     ): PlayerFrame {
-        val step = animator.step(nowMs, mood, target, holdGaze, reducedMotion)
+        val step = animator.step(nowMs, mood, target, holdGaze, reducedMotion, state, motion)
         val frame = avatar.frame(
             FrameOptions(
+                color = color,
+                eyeColor = eyeColor,
                 view = view,
                 time = time,
                 gaze = step.gaze,
                 mood = mood,
+                state = state,
+                motion = motion,
+                stateAge = stateAge ?: step.stateAge,
                 moodBlend = step.moodBlend,
                 reducedMotion = reducedMotion,
             ),

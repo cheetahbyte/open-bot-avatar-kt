@@ -18,6 +18,9 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.unit.dp
 import re.leob.openbotavatar.kt.AvatarCatalog
 import re.leob.openbotavatar.kt.AvatarMood
+import re.leob.openbotavatar.kt.AvatarState
+import re.leob.openbotavatar.kt.FrameOptions
+import re.leob.openbotavatar.kt.FrameShape
 import re.leob.openbotavatar.kt.AvatarView
 import re.leob.openbotavatar.kt.PreparedAvatar
 import java.io.File
@@ -145,6 +148,71 @@ class BotAvatarRenderTest {
         )
         assertEquals(0.0, look.x, 1e-3)
         assertEquals(0.0, look.y, 1e-3)
+    }
+
+    @Test
+    fun aWaitingBotPaintsFilledPathEyes() {
+        rule.setContent {
+            BotAvatar(mug, Modifier.size(240.dp), color = red, eyeColor = Color.Black,
+                state = AvatarState.WAITING, still = true)
+        }
+        val image = capture("waiting")
+        assertTrue(image.count(red) > 1000)
+        assertTrue(image.count(Color.Black) > 300)
+    }
+
+    @Test
+    fun aBlockedBotPaintsItsMarkInsteadOfTheBodyAndEyes() {
+        rule.setContent {
+            BotAvatar(mug, Modifier.size(240.dp), color = red, eyeColor = Color.Black,
+                state = AvatarState.BLOCKED, still = true)
+        }
+        val image = capture("blocked")
+        val side = with(rule.density) { 240.dp.toPx() }
+        assertTrue(image.count(red) / (side * side) in 0.02f..0.15f)
+        assertEquals(0, image.count(Color.Black))
+    }
+
+    @Test
+    fun liveRibbonGradientsUseTheCurrentComposeColor() {
+        val blue = Color(0xFF1688FF)
+        val color = mutableStateOf(red)
+        rule.setContent {
+            BotAvatar(mug, Modifier.size(240.dp), color = color.value, eyeColor = Color.Black,
+                state = AvatarState.DONE, stateAge = 1.2, reducedMotion = AvatarReducedMotion.Off)
+        }
+        fun Bitmap.blueRibbonPixels(): Int {
+            var count = 0
+            for (y in 0 until height) for (x in 0 until width) {
+                val p = Color(getPixel(x, y))
+                // Ignore the flat body and its antialiased edge; look for the blue ribbon ramp.
+                val differsFromBody = abs(p.red - blue.red) > 0.04f || abs(p.green - blue.green) > 0.04f || abs(p.blue - blue.blue) > 0.04f
+                if (differsFromBody && p.blue > p.red + 0.2f && p.blue > p.green + 0.05f) count++
+            }
+            return count
+        }
+        val before = capture("ribbons-red")
+        rule.runOnUiThread { color.value = blue }
+        val after = capture("ribbons-blue")
+        assertTrue(after.count(blue) > 1000)
+        assertTrue("blue ribbons must be recolored, not left orange", after.blueRibbonPixels() > before.blueRibbonPixels() + 1000)
+    }
+
+    @Test
+    fun drawScopePaintsNumericEyeMorphs() {
+        val prepared = PreparedAvatar.of(mug)
+        val frame = prepared.frame(FrameOptions(state = AvatarState.WAITING, mood = AvatarMood.HAPPY,
+            moodBlend = re.leob.openbotavatar.kt.AvatarMoodBlend(
+                re.leob.openbotavatar.kt.MoodState(state = AvatarState.WAITING, mood = AvatarMood.NEUTRAL), 0.4), reducedMotion = true))
+        val eyes = frame.shapes.filterIsInstance<FrameShape.Eye>()
+        assertEquals(2, eyes.size)
+        assertTrue(eyes.all { it.mark is re.leob.openbotavatar.kt.EyeMark.Path })
+        rule.setContent {
+            androidx.compose.foundation.Canvas(Modifier.size(240.dp)) { drawAvatarFrame(frame, red, Color.Black) }
+        }
+        val image = capture("eye-morph")
+        assertTrue(image.count(red) > 1000)
+        assertTrue(image.count(Color.Black) > 300)
     }
 
     @Test

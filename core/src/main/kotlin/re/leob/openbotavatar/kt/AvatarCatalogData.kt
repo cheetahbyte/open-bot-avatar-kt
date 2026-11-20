@@ -91,6 +91,12 @@ internal val generatedGallery: List<AvatarDefinition> = listOf(
         eyes = AvatarEyes(x = 50.0, y = 54.0, spacing = 17.0, scale = 1.15),
     ),
     AvatarDefinition(
+        id = "egg",
+        name = "Egg",
+        path = "M50 10C66 10 82 34 82 58C82 76 68 88 50 88C32 88 18 76 18 58C18 34 34 10 50 10Z",
+        eyes = AvatarEyes(x = 50.0, y = 54.0, spacing = 17.0, scale = 1.2),
+    ),
+    AvatarDefinition(
         id = "ghost",
         name = "Ghost",
         path = "M24 50C24 28 35 12 50 12C65 12 76 28 76 50L77 80C77 85 73 88 68 88C63 88 61 84 59 81C57 84 54 88 50 88C46 88 43 84 41 81C39 84 37 88 32 88C27 88 23 85 23 80Z",
@@ -155,6 +161,7 @@ internal val generatedColors: Map<String, String> = mapOf(
     "camera" to "#7a7a7a",
     "cat" to "#f8a01c",
     "cloud" to "#14b3a5",
+    "egg" to "#f4f4f4",
     "ghost" to "#f4f4f4",
     "magnifier" to "#1f7cf2",
     "paint-brush" to "#1fbf68",

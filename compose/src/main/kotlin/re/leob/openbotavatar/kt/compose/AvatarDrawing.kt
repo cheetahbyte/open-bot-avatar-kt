@@ -6,6 +6,7 @@ import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Canvas
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Matrix
+import androidx.compose.ui.graphics.LinearGradientShader
 import androidx.compose.ui.graphics.Paint
 import androidx.compose.ui.graphics.PaintingStyle
 import androidx.compose.ui.graphics.Path
@@ -41,6 +42,7 @@ internal class AvatarPainter {
         strokeCap = StrokeCap.Round
     }
     private val arc = Path()
+    private val dynamicParser = PathParser()
     private val matrix = Matrix()
 
     fun paint(scope: DrawScope, frame: AvatarFrame, color: Color, eyeColor: Color) {
@@ -55,10 +57,21 @@ internal class AvatarPainter {
                 when (shape) {
                     is FrameShape.Slice -> {
                         val path = paths.getValue(shape.path)
+                        fill.shader = null
                         fill.color = color
                         canvas.drawPath(section(path.id, path.d, path.evenOdd), fill)
                     }
                     is FrameShape.Eye -> eye(canvas, shape.mark, eyeColor)
+                    is FrameShape.Ribbon -> {
+                        val g = shape.gradient
+                        fill.color = Color.White
+                        fill.shader = LinearGradientShader(
+                            Offset(g.x1.toFloat(), g.y1.toFloat()), Offset(g.x2.toFloat(), g.y2.toFloat()),
+                            g.stops.map { Color(android.graphics.Color.parseColor(it)).copy(alpha = color.alpha) },
+                        )
+                        canvas.drawPath(dynamicParser.parsePathString(shape.d).toPath(), fill)
+                        fill.shader = null
+                    }
                 }
                 canvas.restore()
             }
@@ -76,7 +89,12 @@ internal class AvatarPainter {
     }
 
     private fun eye(canvas: Canvas, mark: EyeMark, ink: Color) {
+        fill.shader = null
         when (mark) {
+            is EyeMark.Path -> {
+                fill.color = ink
+                canvas.drawPath(dynamicParser.parsePathString(mark.d).toPath(), fill)
+            }
             is EyeMark.Pill -> {
                 fill.color = ink
                 val radius = mark.radius.toFloat()
@@ -109,7 +127,8 @@ internal class AvatarPainter {
 
 /**
  * Paint [frame] in the largest centered square of this scope. For custom hosts that compute frames
- * themselves; the frame's own colors are hex, so themes pass theirs here.
+ * themselves. Pass the same body color into `FrameOptions.color` when computing the frame:
+ * ribbon gradients are derived there, before painting. These Compose colors also preserve alpha.
  */
 public fun DrawScope.drawAvatarFrame(frame: AvatarFrame, color: Color, eyeColor: Color) {
     AvatarPainter().paint(this, frame, color, eyeColor)

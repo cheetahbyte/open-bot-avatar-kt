@@ -66,8 +66,9 @@ public class PreparedAvatar private constructor(
     private val volume = buildVolume(definition.eyes, depth / DEFAULT_DEPTH, body)
     private val range = gazeRange(body.polys, definition.eyes.copy(scale = volume.eyeScale))
     private val seed = hashString(definition.id)
+    private val prefix = "oba-${hashString("${definition.id}|${definition.path}|${plain(depth)}").toUInt().toString(36)}"
+    private val rims by lazy { ribbonRims(body.polys, volume.bounds) }
     private val framePaths: Map<String, FramePath> = buildMap {
-        val prefix = "oba-${hashString("${definition.id}|${definition.path}|${plain(depth)}").toUInt().toString(36)}"
         for (part in volume.parts) for (s in part.zSlices + part.xSlices) {
             if (s.d !in this) put(s.d, FramePath("$prefix-$size", s.d, s.evenOdd, s.bounds.toBox()))
         }
@@ -88,19 +89,55 @@ public class PreparedAvatar private constructor(
                 reducedMotion = options.reducedMotion,
                 view = options.view,
                 blend = options.moodBlend,
+                state = options.state,
+                stateAge = options.stateAge,
+                motion = options.motion,
             ),
         )
         val pivot = pivotOf(volume.bounds)
         val v = ViewBasis(pose.yaw, pose.pitch)
-        val slices = sliceLayers(v, pivot, renderedSize)
-        val layers = (slices + eyeLayers(v, pivot, pose)).sortedWith(compareBy(numericOrder) { it.depth })
+        val body = bodyScale(pose.bang, pose.dots)
+        val slices = if (body > 0) sliceLayers(v, pivot, renderedSize) else emptyList()
+        val layers = if (body > 0) (slices + eyeLayers(v, pivot, pose)).sortedWith(compareBy(numericOrder) { it.depth }) else emptyList()
+        val shrink = AvatarMatrix.about(pivot.x, pivot.y, AvatarMatrix.scale(body))
+        val shapes = layers.map { layer ->
+            when (val shape = layer.shape) {
+                is FrameShape.Slice -> shape.copy(matrix = if (body < 1) shrink * shape.matrix else shape.matrix)
+                is FrameShape.Eye -> shape.copy(matrix = if (body < 1) shrink * shape.matrix else shape.matrix)
+                is FrameShape.Ribbon -> shape
+            }
+        }
+        val paths = slices.mapNotNull { it.path }.distinctBy { it.id }.toMutableList()
+        val root = rootMatrix(pose, volume.bounds)
+        val fixed = root.inverse()
+        val time = if (options.time.isFinite()) options.time else 0.0
+        val ribbons = if (options.reducedMotion || pose.ribbons <= 0.01) emptyList() else {
+            val rim = if (pose.cage >= 0.5) rims.second else rims.first
+            val palette = ribbonPalette(options.color, seed)
+            ribbonPieces(pose.ribbons, seed, pose.sweep, pose.cage, ribbonsFollow(rim, pose, volume.bounds)).mapIndexed { i, r ->
+                val run = palette[r.ribbon]
+                val (s0, s1) = r.along
+                val stops = listOf(s0, (s0 + s1) / 2, s1).map { runAt(run, it) }
+                val long = hypot(r.to.x - r.from.x, r.to.y - r.from.y) > 0.01
+                val gradient = if (long) RibbonGradient(r.from.x, r.from.y, r.to.x, r.to.y, stops)
+                    else RibbonGradient(r.from.x, r.from.y, r.from.x + 0.01, r.from.y, List(3) { stops[1] })
+                FrameShape.Ribbon("ribbon-$i", r.d, r.box, fixed, r.front, stops[1], gradient)
+            }
+        }
+        val marks = markParts(volume.bounds, pose.bang, pose.dots, seed, time, options.reducedMotion).mapIndexed { i, mark ->
+            val id = "$prefix-${mark.shape}"
+            if (paths.none { it.id == id }) paths.add(FramePath(id, mark.d, false, mark.box))
+            val rotation = AvatarMatrix(kotlin.math.cos(mark.turn), kotlin.math.sin(mark.turn), -kotlin.math.sin(mark.turn), kotlin.math.cos(mark.turn), 0.0, 0.0)
+            val matrix = AvatarMatrix.about(pivot.x, pivot.y, rotation) * (AvatarMatrix.translate(mark.x, mark.y) * AvatarMatrix.scale(mark.scale))
+            FrameShape.Slice("mark-$i", id, fixed * matrix)
+        }
         return AvatarFrame(
             name = definition.name,
             color = normalizeHex(options.color, DEFAULT_COLOR),
             ink = normalizeHex(options.eyeColor, DEFAULT_EYE_COLOR),
-            paths = slices.mapNotNull { it.path }.distinctBy { it.id },
-            root = rootMatrix(pose, volume.bounds),
-            shapes = layers.map { it.shape },
+            paths = paths,
+            root = root,
+            shapes = ribbons.filter { !it.front } + shapes + ribbons.filter { it.front } + marks,
         )
     }
 
@@ -165,14 +202,17 @@ public class PreparedAvatar private constructor(
         return eyeCenters(definition.eyes).mapIndexed { i, c ->
             val ex = c.x + dx
             val ey = c.y + dy
-            if (pose.eyeShape == EyeShape.HAPPY) {
+            val squint = if (i == 0) pose.squintL else pose.squintR
+            val open = max(h * max(0.09, (1 - pose.blink) * (1 - squint * 0.4)), w * 0.55)
+            val shift = (h - open) * 0.18
+            if (pose.eyes.arc >= 1) {
                 val hw = w * HappyArc.HALF_WIDTH
                 val base = ey + h * HappyArc.BASE
                 EyeMark.Arc(ex - hw, base, ex, ey - h * HappyArc.PEAK, ex + hw, base, w * HappyArc.STROKE)
+            } else if (pose.eyes.arc > 0 || pose.eyes.slit > 0) {
+                EyeMark.Path(eyePath(pose.eyes, EyeSpot(ex, ey, w, h, open, shift)))
             } else {
-                val squint = if (i == 0) pose.squintL else pose.squintR
-                val open = max(h * max(0.09, (1 - pose.blink) * (1 - squint * 0.4)), w * 0.55)
-                val cy = ey + (h - open) * 0.18
+                val cy = ey + shift
                 EyeMark.Pill(ex - w / 2, cy - open / 2, w, open, min(w, open) / 2)
             }
         }

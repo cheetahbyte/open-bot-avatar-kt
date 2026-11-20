@@ -65,6 +65,7 @@ private class Solid(
     val depth: Double,
     val rz: Double,
     val heightAt: (Double, Double, Double) -> Double,
+    val levelField: LevelField,
 )
 
 private class FilletShape(val depth: Double, val rxy: Double, val rz: Double)
@@ -74,6 +75,15 @@ private fun surfaceZ(part: FilletShape, dist: Double): Double {
     if (part.rxy <= 0 || dist >= part.rxy) return half
     val k = 1 - max(0.0, dist) / part.rxy
     return half - part.rz + sqrt(max(0.0, 1 - k * k)) * part.rz
+}
+
+/** Inverse of surfaceZ: how far inside the outline the surface reaches this level. */
+private fun insetAt(part: FilletShape, level: Double): Double {
+    val half = part.depth / 2
+    if (part.rxy <= 0 || part.rz <= 0 || level <= half - part.rz) return 0.0
+    if (level >= half) return part.rxy
+    val s = (level - (half - part.rz)) / part.rz
+    return part.rxy * (1 - sqrt(max(0.0, 1 - s * s)))
 }
 
 private fun partDepth(thickness: Double, b: Bounds, volume: Double): Double {
@@ -157,16 +167,34 @@ private fun inflatedSolid(polys: Polygons, b: Bounds, v: Double): Solid {
     val depth = partDepth(thickness, b, v)
     val rz = (depth / 2) * 0.85
     val shape = FilletShape(depth, min(thickness / 2, depth / 2) * 0.9, rz)
-    return Solid(true, depth, rz) { _, _, sd -> surfaceZ(shape, sd) }
+    return Solid(
+        true, depth, rz,
+        { _, _, sd -> surfaceZ(shape, sd) },
+        { _, _, sd, level -> sd - insetAt(shape, level) },
+    )
 }
 
-private fun revolvedAboutX(p: Profile, axis: Double, v: Double) = Solid(false, 2 * p.r.max() * v, 0.0) { x, y, _ ->
-    v * sqrt(max(0.0, radiusAt(p, x).let { it * it } - (y - axis).let { it * it }))
-}
+private fun revolvedAboutX(p: Profile, axis: Double, v: Double) = Solid(
+    false, 2 * p.r.max() * v, 0.0,
+    { x, y, _ -> v * sqrt(max(0.0, radiusAt(p, x).let { it * it } - (y - axis).let { it * it })) },
+    { x, y, _, level ->
+        val r = radiusAt(p, x)
+        val t = y - axis
+        val z = level / max(v, 1e-6)
+        (r * r - t * t - z * z) / (2 * max(r, 0.5))
+    },
+)
 
-private fun revolvedAboutY(p: Profile, axis: Double, v: Double) = Solid(false, 2 * p.r.max() * v, 0.0) { x, y, _ ->
-    v * sqrt(max(0.0, radiusAt(p, y).let { it * it } - (x - axis).let { it * it }))
-}
+private fun revolvedAboutY(p: Profile, axis: Double, v: Double) = Solid(
+    false, 2 * p.r.max() * v, 0.0,
+    { x, y, _ -> v * sqrt(max(0.0, radiusAt(p, y).let { it * it } - (x - axis).let { it * it })) },
+    { x, y, _, level ->
+        val r = radiusAt(p, y)
+        val t = x - axis
+        val z = level / max(v, 1e-6)
+        (r * r - t * t - z * z) / (2 * max(r, 0.5))
+    },
+)
 
 private fun solidOf(polys: Polygons, b: Bounds, center: Point, xAxis: Double?, canRevolve: Boolean, v: Double): Solid {
     val revolved = if (xAxis != null) {
@@ -186,7 +214,7 @@ private fun levelSlices(g: Grid, polys: Polygons, solid: Solid, half: Double): L
     val steps = if (inflated) max(4, min(14, Math.round(rz / 0.8).toInt())) else max(5, min(18, Math.round(half / 1.1).toInt()))
     val ls = if (inflated) listOf(half - rz) + levels(half - rz, rz, steps) else levels(0.0, half, steps)
     fun addLevel(level: Double, box: ThinBox?): Boolean {
-        val loops = levelLoops(g, level, box)
+        val loops = levelLoops(g, level, solid.levelField, box)
         if (loops.isEmpty()) return false
         val inset = loops.flatten().filterIndexed { k, _ -> k % 3 == 0 }.minOf { edgeDistance(polys, it.x, it.y) }
         val d = loopsToPath(loops)

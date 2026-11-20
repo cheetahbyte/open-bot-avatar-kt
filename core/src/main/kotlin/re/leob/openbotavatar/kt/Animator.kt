@@ -22,8 +22,8 @@ public fun moodProgress(elapsedMs: Double): Double = smoothstep(elapsedMs / MOOD
 public fun settleMood(state: MoodState, share: Double = 1.0, depth: Int = 0): MoodState {
     val b = state.blend ?: return state
     val rest = share * (1 - b.t)
-    if (rest < 0.02 || depth >= 3) return MoodState(state.mood)
-    return MoodState(state.mood, AvatarMoodBlend(settleMood(b.from, rest, depth + 1), b.t))
+    if (rest < 0.02 || depth >= 3) return state.copy(blend = null)
+    return state.copy(blend = AvatarMoodBlend(settleMood(b.from, rest, depth + 1), b.t))
 }
 
 /** An eased look direction. [attention] is 0 at rest, 1 when fully following. */
@@ -93,11 +93,13 @@ public data class AnimatorStep(
     val moodBlend: AvatarMoodBlend?,
     /** True while the look or a mood change is still easing. */
     val moving: Boolean,
+    /** Seconds since the state began; mood-only changes preserve this clock. */
+    val stateAge: Double = 0.0,
 )
 
 /** The per-avatar state a live renderer keeps between frames: the eased look and the eased mood change. */
 public class AvatarAnimator {
-    private class Shown(val mood: AvatarMood, var blend: AvatarMoodBlend?, val since: Double)
+    private class Shown(val state: AvatarState, val mood: AvatarMood, var blend: AvatarMoodBlend?, val since: Double, val began: Double)
 
     private var follow = FollowState.REST
     private var last: Double? = null
@@ -109,10 +111,12 @@ public class AvatarAnimator {
      */
     public fun step(
         now: Double,
-        mood: AvatarMood,
-        target: LookDirection?,
+        mood: AvatarMood? = null,
+        target: LookDirection? = null,
         hold: Boolean = false,
         reducedMotion: Boolean = false,
+        state: AvatarState? = null,
+        motion: AvatarMotion? = null,
     ): AnimatorStep {
         val previous = last
         val dt = if (previous == null) 0.0 else (now - previous) / 1000
@@ -124,19 +128,22 @@ public class AvatarAnimator {
             moving = stillMoving
         }
 
+        val look = resolveLook(state, mood, motion)
         val current = shown
-        if (current != null && mood != current.mood) {
+        if (current != null && (look.state != current.state || look.mood != current.mood)) {
             val frozen = current.blend?.let { AvatarMoodBlend(it.from, moodProgress(now - current.since)) }
-            val blend = if (reducedMotion) null else AvatarMoodBlend(settleMood(MoodState(current.mood, frozen)), 0.0)
-            shown = Shown(mood, blend, now)
+            val before = MoodState(current.mood, frozen, current.state, (now - current.began) / 1000)
+            val blend = if (reducedMotion) null else AvatarMoodBlend(settleMood(before), 0.0)
+            shown = Shown(look.state, look.mood, blend, now, if (look.state == current.state) current.began else now)
         }
-        val active = shown ?: Shown(mood, null, now).also { shown = it }
+        val active = shown ?: Shown(look.state, look.mood, null, now,
+            now - if (look.state == AvatarState.DONE) DONE_TURN_S * 1000 else 0.0).also { shown = it }
         val t = if (reducedMotion) 1.0 else moodProgress(now - active.since)
         var moodBlend: AvatarMoodBlend? = null
         val blend = active.blend
         if (blend != null && t < 1) moodBlend = AvatarMoodBlend(blend.from, t) else active.blend = null
 
-        return AnimatorStep(followGaze(follow), moodBlend, moving || moodBlend != null)
+        return AnimatorStep(followGaze(follow), moodBlend, moving || moodBlend != null, (now - active.began) / 1000)
     }
 
     /** Back to rest with no mood history. */

@@ -13,8 +13,17 @@ private fun escape(s: String): String = buildString {
 }
 
 private fun EyeMark.svg(ink: String): String = when (this) {
+    is EyeMark.Path -> """<path d="$d" fill="$ink"/>"""
     is EyeMark.Arc -> """<path d="$d" fill="none" stroke="$ink" stroke-width="${f(strokeWidth)}" stroke-linecap="round"/>"""
     is EyeMark.Pill -> """<rect x="${f(x)}" y="${f(y)}" width="${f(width)}" height="${f(height)}" rx="${f(radius)}" fill="$ink"/>"""
+}
+
+private fun FrameShape.Ribbon.svg(): String {
+    val g = gradient
+    val key = "${f(g.x1)},${f(g.y1)},${f(g.x2)},${f(g.y2)},${g.stops.joinToString(",")}"
+    val id = "oba-g${hashString(key).toUInt().toString(36)}"
+    val stops = g.stops.mapIndexed { i, color -> """<stop offset="${f(i.toDouble() / (g.stops.size - 1))}" stop-color="$color"/>""" }.joinToString("")
+    return """<linearGradient id="$id" gradientUnits="userSpaceOnUse" x1="${f(g.x1)}" y1="${f(g.y1)}" x2="${f(g.x2)}" y2="${f(g.y2)}">$stops</linearGradient><path d="$d" fill="url(#$id)"/>"""
 }
 
 /** The frame as a standalone SVG string, built only from numbers and the renderer's own markup. */
@@ -35,6 +44,7 @@ public fun AvatarFrame.toSvg(size: Double? = null): String {
             when (s) {
                 is FrameShape.Slice -> append("""<use href="#${s.path}" transform="${s.matrix.css()}"/>""")
                 is FrameShape.Eye -> append("""<g transform="${s.matrix.css()}">${s.mark.svg(ink)}</g>""")
+                is FrameShape.Ribbon -> append("""<g transform="${s.matrix.css()}">${s.svg()}</g>""")
             }
         }
         append("</g></svg>")

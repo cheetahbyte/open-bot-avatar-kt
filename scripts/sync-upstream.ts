@@ -9,7 +9,11 @@ const root = resolve(import.meta.dirname, '..');
 const src = join(upstream, 'packages/core/src');
 const { examples, renderAvatarSvg, validateAvatar, computePose, createAnimator, pointerGaze } = await import(join(src, 'index.ts'));
 const { liveFrame } = await import(join(src, 'render.ts'));
-const { hashString } = await import(join(src, 'motion.ts'));
+const { hashString, STATES, MOODS } = await import(join(src, 'motion.ts'));
+const { eyeOutline, eyePath } = await import(join(src, 'eyes.ts'));
+const { execFileSync } = await import('node:child_process');
+const upstreamRevision = execFileSync('git', ['-C', upstream, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+const upstreamVersion = JSON.parse(readFileSync(join(upstream, 'packages/core/package.json'), 'utf8')).version;
 
 type Definition = {
   id: string;
@@ -62,7 +66,10 @@ ${Object.entries(colors).map(([id, hex]) => `    ${kotlinString(id)} to ${kotlin
 
 const defs: Definition[] = [...starters, ...gallery];
 
-const everyone = [{ time: 1.2 }, { time: 7.31, motion: 'happy' }, { time: 3.3, motion: 'thinking', color: '#1FB', eyeColor: '#ffffff' }];
+const everyone = [
+  ...STATES.flatMap((state: string) => MOODS.map((mood: string) => ({ state, mood, time: 1.2, stateAge: 1.2 }))),
+  { time: 1.2 }, { time: 7.31, motion: 'happy' }, { time: 3.3, motion: 'thinking', color: '#1FB', eyeColor: '#ffffff' },
+];
 const thorough = [
   { depth: 0 },
   { depth: 14, time: 2 },
@@ -73,6 +80,18 @@ const thorough = [
   { gaze: { x: -1, y: 1 }, reducedMotion: true },
   { reducedMotion: true, motion: 'happy', size: 256 },
   { time: 5, motion: 'happy', motionBlend: { from: { motion: 'thinking', blend: { from: 'idle', t: 0.4 } }, t: 0.55 } },
+  { state: 'working', stateAge: 2.4, time: 8, color: '#1688ff' },
+  { state: 'done', stateAge: 0.3, time: 12, color: '#fff' },
+  { state: 'done', stateAge: 8, time: 12, color: '#000' },
+  { state: 'done', stateAge: 3.7, time: 12, color: '#888' },
+  { state: 'blocked', motionBlend: { from: { state: 'idle', mood: 'neutral' }, t: 0.48 } },
+  { state: 'waiting', mood: 'happy', motionBlend: { from: { state: 'waiting', mood: 'neutral' }, t: 0.37 } },
+  ...STATES.map((state: string) => ({ state, stateAge: 1.2, time: 8, reducedMotion: true })),
+  { state: 'waiting', mood: 'neutral', motion: 'happy', time: 4 },
+  { state: 'done', mood: 'happy', stateAge: 1.3, time: 12,
+    motionBlend: { from: { state: 'done', mood: 'neutral', age: 0.2 }, t: 0.4 } },
+  { state: 'idle', time: 12, motionBlend: { from: { state: 'done', mood: 'neutral', age: 1.3 }, t: 0.4 } },
+  { state: 'idle', mood: 'happy', time: 12, motionBlend: { from: { state: 'working', age: 2.4 }, t: 0.4 } },
 ];
 const svgs: unknown[] = [];
 const frames: unknown[] = [];
@@ -96,29 +115,50 @@ const invalid: unknown[] = [
 
 const poses: unknown[] = [];
 for (const seed of ['mug', 'ghost', 'x'].map(hashString)) {
-  for (const motion of ['idle', 'thinking', 'happy']) {
-    for (let time = 0; time < 40; time += 1.37) {
-      for (const extra of [{}, { reducedMotion: true }, { gaze: { x: 0.4, y: -0.9, weight: 0.7 } }, { blend: { from: { motion: 'happy' }, t: 0.3 } }]) {
-        const input = { seed: seed | 0, time, motion, reducedMotion: false, ...extra };
+  const looks = [...STATES.flatMap((state: string) => MOODS.map((mood: string) => ({ state, mood }))),
+    ...['idle', 'thinking', 'happy'].map((motion) => ({ motion })),
+    { state: 'waiting', mood: 'neutral', motion: 'happy' }, { state: 'working', motion: 'happy' }];
+  for (const look of looks) {
+    for (let time = 0; time < 20; time += 1.37) {
+      for (const extra of [{}, { reducedMotion: true }, { gaze: { x: 0.4, y: -0.9, weight: 0.7 } },
+        { blend: { from: { state: 'done', mood: 'happy', age: 1.3 }, t: 0.3 } },
+        { blend: { from: { ...look, mood: 'neutral', age: 0.1 }, t: 0.6 } }]) {
+        const input = { seed: seed | 0, time, stateAge: time, ...look, reducedMotion: false, ...extra };
         poses.push({ input, pose: computePose({ ...input, seed }) });
       }
     }
+  }
+  for (const state of STATES) {
+    const input = { seed: seed | 0, time: 7, state, reducedMotion: false };
+    poses.push({ input, pose: computePose({ ...input, seed }) });
   }
 }
 
 const animator = createAnimator();
 const script: unknown[] = [];
-for (let k = 0; k < 120; k++) {
-  const now = 1000 + k * 16;
-  const motion = k < 20 ? 'idle' : k < 30 ? 'happy' : k < 80 ? 'thinking' : 'idle';
+for (let k = 0; k < 320; k++) {
+  if (k === 200) animator.reset();
+  const now = 1000 + k * 40;
+  const state = k < 40 ? 'idle' : k < 70 ? 'working' : k < 170 ? 'done' : k < 180 ? 'blocked' : k < 190 ? 'thinking' : k < 200 ? 'waiting' : 'done';
+  const mood = k % 40 < 20 ? 'neutral' : 'happy';
   const target = k > 10 && k < 60 ? { x: Math.sin(k / 9), y: Math.cos(k / 7) / 2 } : null;
-  const hold = k > 90 && k < 100;
-  script.push({ input: { now, motion, target, hold }, step: animator.step({ now, motion, target, hold, reducedMotion: false }) });
+  const input = { now, state, mood, target, hold: k > 90 && k < 100, reducedMotion: k > 250 && k < 270 };
+  script.push({ input, reset: k === 200, step: animator.step(input) });
 }
+const legacy = createAnimator();
+for (let k = 0; k < 120; k++) {
+  const input = { now: 1000 + k * 16, motion: k < 20 ? 'idle' : k < 30 ? 'happy' : k < 80 ? 'thinking' : 'idle', target: null, reducedMotion: false };
+  script.push({ input, reset: k === 0, step: legacy.step(input) });
+}
+const eyeSpot = { x: 43, y: 48, w: 4.4, h: 12.1, open: 7.2, shift: 0.882 };
+const eyes = [{ arc: 0, slit: 1 }, { arc: 0.3, slit: 0 }, { arc: 0.4, slit: 0.6 }, { arc: 1, slit: 0 }, { arc: 0, slit: 0 }]
+  .map((look) => ({ look, spot: eyeSpot, outline: eyeOutline(look, eyeSpot), path: eyePath(look, eyeSpot) }));
+const detailedFrames = ['mug', 'ghost', 'controller'].filter((id) => defs.some((d) => d.id === id)).flatMap((id) =>
+  thorough.map((options) => ({ id, options: { ...options, size: 64 }, frame: liveFrame(defs.find((d) => d.id === id), { ...options, size: 64 }) })));
 
 const gazes = [[0, 0], [300, 90], [-40, 500], [50, 50]].map(([x, y]) => ({ x, y, gaze: pointerGaze({ x, y }, { left: 10, top: 20, width: 96, height: 96 }, { x: 0.5, y: 0.42 }) }));
 
 const hashes = ['', 'a', 'mug', 'controller'].map((s) => ({ s, hash: hashString(s) | 0 }));
-const json = JSON.stringify({ defs, svgs, frames, invalid, poses, animator: script, gazes, hashes });
+const json = JSON.stringify({ upstreamRevision, upstreamVersion, defs, svgs, frames, detailedFrames, eyes, invalid, poses, animator: script, gazes, hashes });
 writeFileSync(join(root, 'core/src/test/resources/parity.json.gz'), gzipSync(json, { level: 9 }));
 console.log(`${defs.length} definitions, ${svgs.length} svgs, ${(json.length / 1e6).toFixed(1)} MB raw`);

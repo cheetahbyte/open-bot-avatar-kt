@@ -41,7 +41,35 @@ public fun AvatarDefinition.toJson(): JsonObject = buildJsonObject {
     }
 }
 
-public enum class AvatarMood { IDLE, THINKING, HAPPY }
+public enum class AvatarState { IDLE, THINKING, WORKING, WAITING, BLOCKED, DONE }
+
+public enum class AvatarMood {
+    NEUTRAL,
+    HAPPY,
+    @Deprecated("Use state = AvatarState.IDLE and mood = AvatarMood.NEUTRAL") IDLE,
+    @Deprecated("Use state = AvatarState.THINKING and mood = AvatarMood.NEUTRAL") THINKING,
+}
+
+/** The legacy combined state and mood option. Explicit state and mood take precedence. */
+public enum class AvatarMotion { IDLE, THINKING, HAPPY }
+
+internal data class AvatarLook(val state: AvatarState, val mood: AvatarMood)
+
+@Suppress("DEPRECATION")
+internal fun resolveLook(state: AvatarState?, mood: AvatarMood?, motion: AvatarMotion? = null): AvatarLook {
+    val legacy = motion ?: when (mood) {
+        AvatarMood.THINKING -> AvatarMotion.THINKING
+        AvatarMood.IDLE -> AvatarMotion.IDLE
+        else -> null
+    }
+    return AvatarLook(
+        state ?: if (legacy == AvatarMotion.THINKING) AvatarState.THINKING else AvatarState.IDLE,
+        when (mood) {
+            AvatarMood.NEUTRAL, AvatarMood.HAPPY -> mood
+            else -> if (legacy == AvatarMotion.HAPPY) AvatarMood.HAPPY else AvatarMood.NEUTRAL
+        },
+    )
+}
 
 /** A look direction, each axis -1 to 1, x right and y down. */
 public data class LookDirection(val x: Double, val y: Double)
@@ -53,7 +81,14 @@ public data class AvatarGaze(val x: Double, val y: Double, val weight: Double? =
 public data class AvatarView(val yaw: Double, val pitch: Double)
 
 /** A mood on screen, possibly still easing in over what came before. */
-public data class MoodState(val mood: AvatarMood, val blend: AvatarMoodBlend? = null)
+public data class MoodState(
+    val mood: AvatarMood? = null,
+    val blend: AvatarMoodBlend? = null,
+    val state: AvatarState? = null,
+    /** Seconds the state had been showing when the next change began. */
+    val age: Double? = null,
+    val motion: AvatarMotion? = null,
+)
 
 /** Easing into a mood from the state shown before it; [t] runs from 0 to 1. */
 public data class AvatarMoodBlend(val from: MoodState, val t: Double)
@@ -68,10 +103,15 @@ public data class FrameOptions(
     /** Animation clock, seconds. */
     val time: Double = 0.0,
     val gaze: AvatarGaze? = null,
-    val mood: AvatarMood = AvatarMood.IDLE,
+    val mood: AvatarMood? = null,
     val moodBlend: AvatarMoodBlend? = null,
     /** Freezes body motion and blinking at a calm pose; gaze still applies. */
     val reducedMotion: Boolean = false,
+    val state: AvatarState? = null,
+    /** Seconds since the state began. Without it, DONE is at rest. */
+    val stateAge: Double? = null,
+    /** Legacy combined option; explicit state and mood win. */
+    val motion: AvatarMotion? = null,
 )
 
 public const val DEFAULT_COLOR: String = "#ff6a1a"

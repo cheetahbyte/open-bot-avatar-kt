@@ -7,15 +7,13 @@ import re.leob.openbotavatar.kt.geometry.Polygons
 import re.leob.openbotavatar.kt.geometry.contourLoops
 import re.leob.openbotavatar.kt.geometry.forEachEdge
 import re.leob.openbotavatar.kt.geometry.insideRow
-import re.leob.openbotavatar.kt.geometry.segDist
+import re.leob.openbotavatar.kt.geometry.segDist2
 import re.leob.openbotavatar.kt.geometry.simplifyLoop
 import kotlin.math.ceil
 import kotlin.math.floor
 import kotlin.math.max
 import kotlin.math.min
-
-/** Steepness of the outline term in the contour field, so cross-sections hug the outline. */
-private const val OUTLINE_SLOPE = 4.0
+import kotlin.math.sqrt
 
 /** Thin regions, where no inscribed circle within THIN_REACH reaches radius THIN, get refinement slices. */
 private const val THIN = 4.0
@@ -34,7 +32,7 @@ internal class Grid(
 )
 
 private class EdgeIndex(polys: Polygons, b: Bounds) {
-    private val cell = 3.0
+    private val cell = 6.0
     private val buckets = HashMap<Int, MutableList<Int>>()
     private val edges = ArrayList<Double>()
     private val ox = b.minX - 4
@@ -72,16 +70,16 @@ private class EdgeIndex(polys: Polygons, b: Bounds) {
                 while (cx <= bx + r) {
                     if (cx in 0 until span) {
                         buckets[cy * span + cx]?.forEach { k ->
-                            val d = segDist(x, y, edges[k], edges[k + 1], edges[k + 2], edges[k + 3])
+                            val d = segDist2(x, y, edges[k], edges[k + 1], edges[k + 2], edges[k + 3])
                             if (d < best) best = d
                         }
                     }
                     cx += stride
                 }
             }
-            if (best <= r * cell) break
+            if (best <= (r * cell) * (r * cell)) break
         }
-        return best
+        return sqrt(best)
     }
 }
 
@@ -110,7 +108,10 @@ internal fun sampleGrid(polys: Polygons, b: Bounds, step: Double, height: (Doubl
 
 internal data class ThinBox(val i0: Int, val i1: Int, val j0: Int, val j1: Int, val top: Double)
 
-internal fun levelLoops(g: Grid, level: Double, box: ThinBox?): List<List<Point>> {
+/** Continuous cross-section field: positive inside, zero at its edge, in roughly viewBox units. */
+internal typealias LevelField = (x: Double, y: Double, sd: Double, level: Double) -> Double
+
+internal fun levelLoops(g: Grid, level: Double, field: LevelField, box: ThinBox?): List<List<Point>> {
     val i0 = if (box != null) max(0, box.i0 - 1) else 0
     val i1 = if (box != null) min(g.nx - 1, box.i1 + 1) else g.nx - 1
     val j0 = if (box != null) max(0, box.j0 - 1) else 0
@@ -121,10 +122,12 @@ internal fun levelLoops(g: Grid, level: Double, box: ThinBox?): List<List<Point>
     for (j in 0 until ny) {
         for (i in 0 until nx) {
             val k = (j + j0) * g.nx + i + i0
-            var v = min(g.h[k] - level, OUTLINE_SLOPE * g.sd[k])
+            val sd = g.sd[k]
+            // Both terms stay continuous across the outline, unlike the clipped surface height.
+            var v = min(field(g.x0 + (i + i0) * g.step, g.y0 + (j + j0) * g.step, sd, level), sd)
             if (box != null) {
                 val edge = minOf(minOf(i + i0 - box.i0, box.i1 - i - i0), minOf(j + j0 - box.j0, box.j1 - j - j0))
-                v = min(v, OUTLINE_SLOPE * g.step * edge)
+                v = min(v, g.step * edge)
             }
             values[j * nx + i] = v
         }

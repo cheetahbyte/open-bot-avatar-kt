@@ -2,9 +2,11 @@ package re.leob.openbotavatar.kt.geometry
 
 import kotlin.math.PI
 import kotlin.math.abs
+import kotlin.math.acos
 import kotlin.math.atan2
 import kotlin.math.ceil
 import kotlin.math.cos
+import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.sin
 import kotlin.math.sqrt
@@ -258,7 +260,9 @@ private fun sampleArc(x0: Double, y0: Double, s: Segment.Arc, out: MutableList<P
     var dt = ang((x1p - cxp) / rx, (y1p - cyp) / ry, (-x1p - cxp) / rx, (-y1p - cyp) / ry)
     if (!s.sweep && dt > 0) dt -= 2 * PI
     if (s.sweep && dt < 0) dt += 2 * PI
-    val steps = max(4, ceil((abs(dt) / (PI / 2)) * 6).toInt())
+    // A chord over angle theta sags r * (1 - cos(theta / 2)).
+    val step = 2 * acos(max(-1.0, 1 - FLATNESS / max(rx, ry)))
+    val steps = minOf(256, max(4, ceil(abs(dt) / step).toInt()))
     for (k in 1..steps) {
         val t = t1 + (dt * k) / steps
         val ex = rx * cos(t)
@@ -266,6 +270,9 @@ private fun sampleArc(x0: Double, y0: Double, s: Segment.Arc, out: MutableList<P
         out.add(Point(cos * ex - sin * ey + cx, sin * ex + cos * ey + cy))
     }
 }
+
+/** Largest gap in viewBox units between a curve and its flattened polygon. */
+internal const val FLATNESS = 0.02
 
 internal fun flattenPath(segments: List<Segment>): Polygons {
     val polys = ArrayList<List<Point>>()
@@ -286,7 +293,12 @@ internal fun flattenPath(segments: List<Segment>): Polygons {
                 py = s.y
             }
             is Segment.Cubic -> {
-                val n = 12
+                // Wang's bound keeps every chord within FLATNESS of the curve.
+                val m = max(
+                    hypot(px - 2 * s.x1 + s.x2, py - 2 * s.y1 + s.y2),
+                    hypot(s.x1 - 2 * s.x2 + s.x, s.y1 - 2 * s.y2 + s.y),
+                )
+                val n = minOf(128, max(2, ceil(sqrt((0.75 * m) / FLATNESS)).toInt()))
                 for (k in 1..n) {
                     val t = k.toDouble() / n
                     val u = 1 - t
@@ -301,7 +313,7 @@ internal fun flattenPath(segments: List<Segment>): Polygons {
                 py = s.y
             }
             is Segment.Quad -> {
-                val n = 8
+                val n = minOf(128, max(2, ceil(sqrt((0.25 * hypot(px - 2 * s.x1 + s.x, py - 2 * s.y1 + s.y)) / FLATNESS)).toInt()))
                 for (k in 1..n) {
                     val t = k.toDouble() / n
                     val u = 1 - t
@@ -316,9 +328,11 @@ internal fun flattenPath(segments: List<Segment>): Polygons {
                 py = s.y
             }
             Segment.Close -> {
-                polys.add(cur)
-                px = cur[0].x
-                py = cur[0].y
+                if (cur.isNotEmpty()) {
+                    polys.add(cur)
+                    px = cur[0].x
+                    py = cur[0].y
+                }
                 cur = ArrayList()
             }
         }

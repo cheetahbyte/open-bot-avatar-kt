@@ -1,6 +1,8 @@
 package re.leob.openbotavatar.kt.geometry
 
+import kotlin.math.abs
 import kotlin.math.floor
+import kotlin.math.max
 import kotlin.math.sqrt
 
 internal data class Point(val x: Double, val y: Double)
@@ -8,6 +10,16 @@ internal data class Point(val x: Double, val y: Double)
 internal typealias Polygons = List<List<Point>>
 
 internal data class Bounds(val minX: Double, val minY: Double, val maxX: Double, val maxY: Double)
+
+/** JavaScript's scaled two-coordinate norm; its last bit decides ties in contour simplification. */
+internal fun hypot2(x: Double, y: Double): Double {
+    if (x.isInfinite() || y.isInfinite()) return Double.POSITIVE_INFINITY
+    val scale = max(abs(x), abs(y))
+    if (scale == 0.0) return 0.0
+    val a = abs(x) / scale
+    val b = abs(y) / scale
+    return sqrt(a * a + b * b) * scale
+}
 
 internal inline fun forEachEdge(polys: Polygons, action: (Point, Point) -> Unit) {
     for (poly in polys) {
@@ -19,7 +31,10 @@ internal inline fun forEachEdge(polys: Polygons, action: (Point, Point) -> Unit)
     }
 }
 
-internal fun segDist(px: Double, py: Double, ax: Double, ay: Double, bx: Double, by: Double): Double {
+internal fun segDist(px: Double, py: Double, ax: Double, ay: Double, bx: Double, by: Double): Double =
+    sqrt(segDist2(px, py, ax, ay, bx, by))
+
+internal fun segDist2(px: Double, py: Double, ax: Double, ay: Double, bx: Double, by: Double): Double {
     val dx = bx - ax
     val dy = by - ay
     val len = dx * dx + dy * dy
@@ -27,7 +42,7 @@ internal fun segDist(px: Double, py: Double, ax: Double, ay: Double, bx: Double,
     t = if (t < 0) 0.0 else if (t > 1) 1.0 else t
     val ex = ax + t * dx - px
     val ey = ay + t * dy - py
-    return sqrt(ex * ex + ey * ey)
+    return ex * ex + ey * ey
 }
 
 internal fun edgeDistance(polys: Polygons, x: Double, y: Double): Double {

@@ -1,7 +1,7 @@
 package re.leob.openbotavatar.kt.geometry
 
 import kotlin.math.abs
-import kotlin.math.hypot
+import kotlin.math.atan2
 
 /** Row-major samples of a scalar field; the outermost ring should be below every level. */
 internal class Field(
@@ -94,8 +94,8 @@ internal fun contourLoops(field: Field, level: Double): List<List<Point>> {
 private fun perpendicular(p: Point, a: Point, b: Point): Double {
     val dx = b.x - a.x
     val dy = b.y - a.y
-    val len = hypot(dx, dy)
-    if (len == 0.0) return hypot(p.x - a.x, p.y - a.y)
+    val len = hypot2(dx, dy)
+    if (len == 0.0) return hypot2(p.x - a.x, p.y - a.y)
     return abs(dx * (a.y - p.y) - dy * (a.x - p.x)) / len
 }
 
@@ -105,7 +105,7 @@ internal fun simplifyLoop(loop: List<Point>, tolerance: Double): List<Point> {
     var far = 0
     var best = -1.0
     for (k in 1 until loop.size) {
-        val d = hypot(loop[k].x - loop[0].x, loop[k].y - loop[0].y)
+        val d = hypot2(loop[k].x - loop[0].x, loop[k].y - loop[0].y)
         if (d > best) {
             best = d
             far = k
@@ -138,13 +138,89 @@ internal fun simplifyLoop(loop: List<Point>, tolerance: Double): List<Point> {
     return loop.filterIndexed { k, _ -> keep[k] }
 }
 
+/** Vertices snap to even hundredths so edge midpoints land exactly on the path-number grid. */
+private const val UNIT = 100L
+
+private fun pathNumber(k: Long): String {
+    val a = abs(k)
+    val whole = a / UNIT
+    val frac = a % UNIT
+    val fraction = when {
+        frac == 0L -> ""
+        frac % 10 == 0L -> ".${frac / 10}"
+        frac < 10 -> ".0$frac"
+        else -> ".$frac"
+    }
+    return (if (k < 0) "-" else "") + (if (whole != 0L || fraction.isEmpty()) whole.toString() else "") + fraction
+}
+
+/** Sharper turns and turns whose curve would stray over SAG from the outline stay corners. */
+private const val CORNER = 0.6
+private const val SAG = 0.1
+
+/** Compact closed paths: gentle facets become midpoint quadratics; real outline corners stay sharp. */
 internal fun loopsToPath(loops: List<List<Point>>): String = buildString {
+    var command = ' '
+    var last = ""
+    fun emit(c: Char, vararg values: Long) {
+        if (c != command) {
+            append(c)
+            command = c
+            last = ""
+        }
+        for (value in values) {
+            val token = pathNumber(value)
+            if (last.isNotEmpty() && token[0] != '-' && !(token[0] == '.' && '.' in last)) append(' ')
+            append(token)
+            last = token
+        }
+    }
     for (loop in loops) {
-        append("M${fixed(loop[0].x, 1)} ${fixed(loop[0].y, 1)}L")
-        for (k in 1 until loop.size) {
-            if (k > 1) append(' ')
-            append("${fixed(loop[k].x, 1)} ${fixed(loop[k].y, 1)}")
+        val n = loop.size
+        val xs = LongArray(n) { 2 * Math.round(loop[it].x * UNIT / 2) }
+        val ys = LongArray(n) { 2 * Math.round(loop[it].y * UNIT / 2) }
+        val corner = BooleanArray(n) { k ->
+            val p = loop[k]
+            val a = loop[(k + n - 1) % n]
+            val b = loop[(k + 1) % n]
+            val cross = (p.x - a.x) * (b.y - p.y) - (p.y - a.y) * (b.x - p.x)
+            abs(atan2(cross, (p.x - a.x) * (b.x - p.x) + (p.y - a.y) * (b.y - p.y))) > CORNER ||
+                abs(cross) > 4 * SAG * hypot2(b.x - a.x, b.y - a.y)
+        }
+        fun midX(k: Int) = (xs[k % n] + xs[(k + 1) % n]) / 2
+        fun midY(k: Int) = (ys[k % n] + ys[(k + 1) % n]) / 2
+        var cx = midX(0)
+        var cy = midY(0)
+        emit('M', cx, cy)
+        var smooth = false
+        for (k in 1..n) {
+            val px = xs[k % n]
+            val py = ys[k % n]
+            if (corner[k % n]) {
+                emit('l', px - cx, py - cy)
+                cx = px
+                cy = py
+                if (k < n && !corner[(k + 1) % n]) {
+                    val mx = midX(k)
+                    val my = midY(k)
+                    emit('l', mx - cx, my - cy)
+                    cx = mx
+                    cy = my
+                }
+                smooth = false
+            } else {
+                val mx = midX(k)
+                val my = midY(k)
+                // Reflection through the shared midpoint makes the next vertex the smooth control.
+                if (smooth) emit('t', mx - cx, my - cy)
+                else emit('q', px - cx, py - cy, mx - cx, my - cy)
+                cx = mx
+                cy = my
+                smooth = true
+            }
         }
         append('Z')
+        command = 'Z'
+        last = ""
     }
 }

@@ -20,7 +20,14 @@ public data class AvatarMatrix(
         b * n.e + d * n.f + f,
     )
 
+    internal fun inverse(): AvatarMatrix {
+        val det = a * d - b * c
+        return AvatarMatrix(d / det, -b / det, -c / det, a / det, (c * f - d * e) / det, (b * e - a * f) / det)
+    }
+
     internal companion object {
+        fun about(x: Double, y: Double, matrix: AvatarMatrix) = translate(x, y) * (matrix * translate(-x, -y))
+        fun scale(s: Double) = AvatarMatrix(s, 0.0, 0.0, s, 0.0, 0.0)
         fun translate(x: Double, y: Double) = AvatarMatrix(1.0, 0.0, 0.0, 1.0, x, y)
     }
 }
@@ -29,6 +36,9 @@ public data class PathBox(val x: Double, val y: Double, val w: Double, val h: Do
 
 /** How one eye is drawn, in its face plane's coordinates (viewBox units). */
 public sealed interface EyeMark {
+    /** A filled outline for slits and numeric eye morphs. */
+    public data class Path(val d: String) : EyeMark
+
     public data class Pill(
         val x: Double,
         val y: Double,
@@ -53,6 +63,10 @@ public sealed interface EyeMark {
     }
 }
 
+public data class RibbonGradient(
+    val x1: Double, val y1: Double, val x2: Double, val y2: Double, val stops: List<String>,
+)
+
 public sealed interface FrameShape {
     /** Stable across frames for the same cross-section or eye: use it as a key in retained renderers. */
     public val key: String
@@ -63,6 +77,16 @@ public sealed interface FrameShape {
         override val key: String,
         val path: String,
         override val matrix: AvatarMatrix,
+    ) : FrameShape
+
+    public data class Ribbon(
+        override val key: String,
+        val d: String,
+        val box: PathBox,
+        override val matrix: AvatarMatrix,
+        val front: Boolean,
+        val fill: String,
+        val gradient: RibbonGradient,
     ) : FrameShape
 
     public data class Eye(

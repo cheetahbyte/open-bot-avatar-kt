@@ -15,6 +15,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
@@ -34,6 +35,8 @@ import re.leob.openbotavatar.kt.AvatarEyes
 import re.leob.openbotavatar.kt.AvatarFrame
 import re.leob.openbotavatar.kt.AvatarGaze
 import re.leob.openbotavatar.kt.AvatarMood
+import re.leob.openbotavatar.kt.AvatarState
+import re.leob.openbotavatar.kt.AvatarMotion
 import re.leob.openbotavatar.kt.AvatarPlayer
 import re.leob.openbotavatar.kt.AvatarView
 import re.leob.openbotavatar.kt.DEFAULT_COLOR
@@ -56,6 +59,8 @@ public object BotAvatarDefaults {
 
 /** [AvatarCatalog.color] as a Compose color. */
 public fun AvatarCatalog.displayColor(id: String): Color = hexColor(color(id))
+
+private fun Color.rgbHex(): String = "#" + (toArgb() and 0xffffff).toString(16).padStart(6, '0')
 
 private data class Placement(val rect: Rect, val visible: Boolean)
 
@@ -82,7 +87,9 @@ internal fun lookFrom(position: Offset, bounds: Rect, eyes: AvatarEyes, density:
  * The first build runs in the background and the avatar is empty until it finishes. An invalid
  * [definition] logs an error and draws nothing; run imported data through `validateAvatar` first.
  *
- * @param mood changes ease from the current pose.
+ * @param state what the bot is doing; changes ease from the current pose.
+ * @param mood how the bot feels, independently of its state.
+ * @param stateAge optional explicit state clock; normally the player tracks it automatically.
  * @param depth volume from 0 (flat) to 14; 6 is natural.
  * @param followPointer look and turn toward touches and the mouse; see [AvatarPointerArea].
  * @param lookAt fixed look direction; wins over the pointer.
@@ -98,7 +105,7 @@ public fun BotAvatar(
     modifier: Modifier = Modifier,
     color: Color = BotAvatarDefaults.Color,
     eyeColor: Color = BotAvatarDefaults.EyeColor,
-    mood: AvatarMood = AvatarMood.IDLE,
+    mood: AvatarMood? = null,
     depth: Double = DEFAULT_DEPTH,
     followPointer: Boolean = false,
     lookAt: LookDirection? = null,
@@ -107,6 +114,9 @@ public fun BotAvatar(
     reducedMotion: AvatarReducedMotion = AvatarReducedMotion.System,
     still: Boolean = false,
     label: String? = null,
+    state: AvatarState? = null,
+    stateAge: Double? = null,
+    motion: AvatarMotion? = null,
 ) {
     val prepared by rememberPreparedAvatar(definition, depth)
     val painter = remember { AvatarPainter() }
@@ -138,6 +148,11 @@ public fun BotAvatar(
         }
         LiveInput(
             mood = mood,
+            state = state,
+            stateAge = stateAge,
+            motion = motion,
+            color = color.rgbHex(),
+            eyeColor = eyeColor.rgbHex(),
             target = lookAt ?: followed,
             holdGaze = holdGaze,
             view = view,
@@ -148,9 +163,10 @@ public fun BotAvatar(
     }
 
     val stillFrame = if (still) {
-        remember(prepared, mood, view, lookAt) {
+        remember(prepared, mood, state, motion, stateAge, view, lookAt, color, eyeColor) {
             val gaze = lookAt?.let { AvatarGaze(it.x, it.y) }
-            prepared?.frame(FrameOptions(view = view, gaze = gaze, mood = mood, reducedMotion = true))
+            prepared?.frame(FrameOptions(view = view, gaze = gaze, mood = mood, state = state, motion = motion,
+                stateAge = stateAge, color = color.rgbHex(), eyeColor = eyeColor.rgbHex(), reducedMotion = true))
         }
     } else {
         LaunchedEffect(prepared) {
