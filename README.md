@@ -1,11 +1,11 @@
 # Open Bot Avatar for Android
 
-A Kotlin and Jetpack Compose adaptation of [Open Bot Avatar](https://github.com/DominikScholz/open-bot-avatar).
-An avatar is one SVG silhouette and an eye placement. The renderer adds volume, gaze, states, moods, and effects.
+A Kotlin and Jetpack Compose port of [Open Bot Avatar](https://github.com/DominikScholz/open-bot-avatar) by Dominik Scholz.
+An avatar combines an SVG silhouette with eye placement. The renderer adds volume, gaze, states, moods, and effects.
 
-This library reads the same definitions as the TypeScript package and produces the same frames.
-It tracks upstream version 0.3.0 at commit [`5e64c08`](https://github.com/DominikScholz/open-bot-avatar/commit/5e64c081971eb296f562544641bad37d40fb36b6).
-The portable definition remains contract version 1.
+This port reads the same definitions and produces the same frames as upstream **0.3.0** at
+[`5e64c08`](https://github.com/DominikScholz/open-bot-avatar/commit/5e64c081971eb296f562544641bad37d40fb36b6).
+The portable definition remains **contract version 1**.
 
 ## Modules
 
@@ -14,55 +14,39 @@ The portable definition remains contract version 1.
 | `re.leob.openbotavatar.kt:open-bot-avatar-core` | Validation, volume, poses, frames, and SVG output. Plain JVM, no Android. | `kotlinx-serialization-json` |
 | `re.leob.openbotavatar.kt:open-bot-avatar-compose` | The `BotAvatar` composable and pointer tracking. | `core`, Compose UI |
 
-Requirements: Android 7.0 (API level 24) or later, and Java 17 bytecode support.
+Requires Android 7.0 (API level 24) or later and Java 17 bytecode support.
+Build with JDK 17–25 and Android SDK 36. The Compose module fails on JDK 27.
 
 ## Add the library
 
-The library isn't published to a Maven repository. Gradle can build it from this Git repository,
-or you can include a checkout.
+The library isn't published to a Maven repository. Use a pinned checkout for the features documented here:
 
-### Build from Git
+1. From your app's root directory, clone and check out the implementation:
 
-This option needs no checkout, and Gradle clones the release tag for you. Add the repository to
-your `settings.gradle.kts` file:
+   ```sh
+   git clone https://github.com/cheetahbyte/open-bot-avatar-kt.git third_party/open-bot-avatar-kt
+   git -C third_party/open-bot-avatar-kt checkout aa95598a5c2533cd249d0e458e7af9743e29b004
+   ```
 
-```kotlin
-sourceControl {
-    gitRepository(uri("https://github.com/cheetahbyte/open-bot-avatar-kt.git")) {
-        producesModule("re.leob.openbotavatar.kt:open-bot-avatar-core")
-        producesModule("re.leob.openbotavatar.kt:open-bot-avatar-compose")
-    }
-}
-```
+2. Include the checkout in your app's `settings.gradle.kts`:
 
-Then add the dependency to your app module:
+   ```kotlin
+   includeBuild("third_party/open-bot-avatar-kt")
+   ```
 
-```kotlin
-dependencies {
-    implementation("re.leob.openbotavatar.kt:open-bot-avatar-compose:0.1.0")
-}
-```
+3. Add the dependency to your app module:
 
-This option has the following limits:
+   ```kotlin
+   dependencies {
+       implementation("re.leob.openbotavatar.kt:open-bot-avatar-compose:0.1.0")
+   }
+   ```
 
-- Gradle turns off the configuration cache for your whole build.
-- You must set the `ANDROID_HOME` environment variable. Your project's `local.properties` file isn't used.
-- You can pin a tag or a branch, but not a commit.
+Gradle uses the included checkout; `0.1.0` is its current module version, not a new release.
+The older Git tag `0.1.0` tracks upstream 0.2.0 and doesn't include these features.
 
-### Include a checkout
-
-This option keeps the configuration cache and can pin any commit. Add the library as a Git submodule,
-then include it in your `settings.gradle.kts` file:
-
-```kotlin
-includeBuild("third_party/open-bot-avatar-kt")
-```
-
-The included build doesn't read your project's `local.properties` file, so it needs its own Android
-SDK location. Set the `ANDROID_HOME` environment variable, or add a `local.properties` file to the
-library checkout.
-
-Add the same dependency to your app module.
+This setup preserves configuration-cache support. Set `ANDROID_HOME` or create `third_party/open-bot-avatar-kt/local.properties` with the SDK location.
+The included build doesn't read your app's `local.properties`.
 
 ## Show an avatar
 
@@ -78,14 +62,11 @@ BotAvatar(
 )
 ```
 
-The avatar paints past its bounds while it turns and hops, so don't clip it tightly.
-
-The first build of a definition runs in the background, and the avatar is empty until it finishes.
-Later uses of a recent definition appear at once.
+Don't clip the avatar tightly: it paints past its bounds while turning and hopping.
+The first build of a definition runs in the background; the avatar stays empty until it finishes. Recent definitions use cached preparation.
 
 | Parameter | Behavior |
 | --- | --- |
-| `definition` | Required. Validate imported data first. |
 | `color`, `eyeColor` | Compose colors. Theme colors work and update live. |
 | `state` | `IDLE` (default), `THINKING`, `WORKING`, `WAITING`, `BLOCKED`, or `DONE`. Changes ease from the current pose. |
 | `mood` | `NEUTRAL` (default) or `HAPPY`, independent of the state. Eyes morph between looks. |
@@ -99,40 +80,27 @@ Later uses of a recent definition appear at once.
 | `still` | Draw one calm frame and never animate. Use it for thumbnails and lists. |
 | `label` | Accessible name. The default is the definition's name. `""` marks the avatar as decorative. |
 
+`AvatarCatalog.examples` and `gallery` contain upstream starter avatars and community definitions; `all` combines them, and `definition(id)` finds one.
+`color(id)` returns the upstream hex color. In Compose, use `color = AvatarCatalog.displayColor("ghost")` for its `Color` equivalent.
+
 ### States and moods
 
-Thinking replaces the body with three hopping dots. Blocked replaces it with an exclamation mark.
+Thinking replaces the body with three hopping dots; blocked uses an exclamation mark.
 Working periodically sweeps ribbons around the body. Done celebrates with turns and ribbons, then rests before repeating.
 Waiting has slit eyes; a happy mood replaces them with arcs. Happy idle avatars also hop.
 Reduced motion freezes body motion and marks, stops blinking, and hides ribbons.
 
-An avatar mounted in `DONE` starts at rest. A later transition into `DONE` starts its celebration immediately.
-For deterministic exports, pass `FrameOptions(state = AvatarState.DONE, stateAge = 1.2)`.
-Without `stateAge`, exported done avatars rest.
+An avatar mounted in `DONE` starts at rest; transitioning into `DONE` starts its celebration immediately.
+For deterministic exports, pass `FrameOptions(state = AvatarState.DONE, stateAge = 1.2)`. Without `stateAge`, exported done avatars rest.
 
-Existing `mood = AvatarMood.IDLE` and `mood = AvatarMood.THINKING` calls still work but are deprecated.
+Legacy `mood = AvatarMood.IDLE` and `mood = AvatarMood.THINKING` calls still work but are deprecated.
 Replace them with `state = AvatarState.IDLE` or `state = AvatarState.THINKING`; use `AvatarMood.NEUTRAL` for the mood.
-The legacy `AvatarMotion` option also remains available. Explicit state and mood take precedence over it.
-Recompile consumers after updating: the expanded pose and frame models aren't binary-compatible with 0.1.0.
-
-## Use the catalog
-
-`AvatarCatalog` ships the upstream starter avatars and community gallery. `examples` and `gallery`
-list them, `all` combines them, and `definition` finds one by ID. `color` returns the hex color that
-upstream shows an avatar in. In Compose, `displayColor` returns the same color as a `Color`:
-
-```kotlin
-BotAvatar(
-    definition = AvatarCatalog.definition("ghost")!!,
-    modifier = Modifier.size(96.dp),
-    color = AvatarCatalog.displayColor("ghost"),
-)
-```
+`AvatarMotion` remains available, but explicit state and mood take precedence.
+Recompile consumers: the expanded pose and frame models aren't binary-compatible with the `0.1.0` release.
 
 ## Follow the pointer across a screen
 
-Without further setup, a `followPointer` avatar sees only touches inside its own box. To follow
-touches anywhere, wrap the screen in `AvatarPointerArea`:
+By default, `followPointer` sees only touches inside the avatar's box. To track the whole screen, wrap it in `AvatarPointerArea`:
 
 ```kotlin
 AvatarPointerArea(Modifier.fillMaxSize()) {
@@ -144,9 +112,8 @@ AvatarPointerArea(Modifier.fillMaxSize()) {
 
 ## Validate imported definitions
 
-`validateAvatar` accepts JSON text, a `JsonElement`, or an `AvatarDefinition`. It returns the
-normalized definition or a list of errors. The rules are in the
-[avatar definition contract](https://github.com/DominikScholz/open-bot-avatar/blob/main/docs/avatar-contract.md).
+`validateAvatar` accepts JSON text, a `JsonElement`, or an `AvatarDefinition` and returns a normalized definition or errors.
+See the [avatar definition contract](https://github.com/DominikScholz/open-bot-avatar/blob/5e64c081971eb296f562544641bad37d40fb36b6/docs/avatar-contract.md):
 
 ```kotlin
 when (val result = validateAvatar(text)) {
@@ -159,8 +126,7 @@ Unlike upstream, invalid JSON syntax returns `Invalid` instead of throwing an ex
 
 ## Render without Compose
 
-The `core` module works on any JVM. `PreparedAvatar.of` validates a definition and builds its volume.
-Call it off the main thread, because the build is the expensive step. Frames are then cheap:
+The `core` module works without Android. Call `PreparedAvatar.of` off the main thread to validate and build the volume once:
 
 ```kotlin
 val avatar = PreparedAvatar.of(definition)
@@ -168,53 +134,47 @@ val svg = avatar.svg(FrameOptions(color = "#1fbf68", mood = AvatarMood.HAPPY), s
 val frame = avatar.frame(FrameOptions(time = 1.2))
 ```
 
-`AvatarFrame` lists paths and transforms from back to front, for custom renderers.
-Draw slices in `color`, eyes in `ink`, and ribbon pieces with their user-space linear gradients.
-Eyes can be pills, stroked arcs, or filled paths. Marks use ordinary slices.
-The supplied matrices keep ribbons and marks independent of the body's root motion.
-In Compose, `DrawScope.drawAvatarFrame` paints the frame.
-When computing frames yourself, pass the same body color into `FrameOptions.color` and `drawAvatarFrame`.
-Ribbon palettes are generated before painting.
+`AvatarFrame` lists paths and transforms from back to front. For custom renderers:
 
-To drive your own animation host, use `AvatarPlayer`, or use `AvatarAnimator` and `computePose` for finer control.
-Keep one player per on-screen avatar. It preserves state age through mood changes and definition replacements.
-Compose forwards your current body color before generating ribbon palettes, so gradients follow theme changes.
+- Draw slices in `color`, eyes in `ink`, and ribbons with their user-space linear gradients.
+- Handle pill eyes, stroked arcs, and filled eye paths. Marks use ordinary slices.
+- Apply the supplied matrices to keep ribbons and marks independent of the body's root motion.
+
+In Compose, `DrawScope.drawAvatarFrame` paints the frame. Pass the same body color to it and `FrameOptions.color`, because ribbon palettes are generated before painting.
+`BotAvatar` handles this automatically, including live theme changes.
+
+Use `AvatarPlayer` for your animation host, or `AvatarAnimator` and `computePose` for finer control.
+Keep one player per on-screen avatar to preserve state age through mood changes and definition replacements.
 
 ## Differences from the TypeScript package
 
 - `AvatarState`, `AvatarMood`, and the legacy `AvatarMotion` use enum values instead of strings.
-- Colors in `BotAvatar` are Compose colors, which replace CSS colors.
 - `renderAvatarScene`, `sceneFrame`, and `renderer: "scene"` are left out because they target CSS 3D.
 - `avatarExtent` and bitmap fitting are left out because Compose draws without an intermediate bitmap.
 - The advisory `validate.sh --strict` checks (`faceRoom`, `silhouetteSeams`) are left out. They aren't part of the upstream public API.
-- `PreparedAvatar` is public, so apps can build volumes on a background thread.
 
-## Development
+## Build and test
 
-Building requires JDK 17 to 25 and Android SDK 36. The `compose` module fails on JDK 27.
+Build and run the tests without an emulator:
 
 ```sh
 ./gradlew build
 ```
 
-The tests run without an emulator:
+- `ParityTest` compares validation, eye outlines, frames, poses, state clocks, and SVG output with versioned TypeScript fixtures.
+- `AvatarPlayerTest` checks legacy calls, transitions, replacement marks, ribbon stacking, colors, and reduced motion.
+- `BotAvatarRenderTest` uses Skia and Robolectric; renders are saved in `compose/build/renders`.
 
-- `ParityTest` compares validation, numeric eye outlines, full frames, poses, state clocks, and SVG output with TypeScript fixtures.
-- `AvatarPlayerTest` checks legacy calls, state transitions, replacement marks, ribbon stacking, colors, and reduced motion.
-- `BotAvatarRenderTest` draws the composable through Skia with Robolectric. Renders are saved in `compose/build/renders`.
-
-To update to a new upstream version, regenerate `AvatarCatalogData.kt` and the fixtures. Replace
-`UPSTREAM_PATH` with the path to an `open-bot-avatar` checkout:
+To update upstream data, regenerate `AvatarCatalogData.kt` and fixtures with Node.js 22.18 or later.
+Replace `UPSTREAM_PATH` with the path to a clean checkout of the linked upstream revision:
 
 ```sh
 node scripts/sync-upstream.ts UPSTREAM_PATH
 ./gradlew build
 ```
 
-The script requires a Node.js version that runs TypeScript directly (22.18 or later).
-Fixtures record the upstream package version and Git revision.
-They cover all state and mood combinations, legacy options, interrupted transitions, and ribbon gradients.
+Fixtures record the upstream version and Git revision and cover every state and mood, legacy options, interrupted transitions, and ribbon gradients.
 
-## License
+## License and attribution
 
-[MIT](LICENSE). Based on [Open Bot Avatar](https://github.com/DominikScholz/open-bot-avatar) by Dominik Scholz.
+[MIT](LICENSE). Port of [Open Bot Avatar](https://github.com/DominikScholz/open-bot-avatar) by Dominik Scholz.
