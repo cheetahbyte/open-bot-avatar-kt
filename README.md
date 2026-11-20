@@ -7,6 +7,9 @@ This port reads the same definitions and produces the same frames as upstream **
 [`5e64c08`](https://github.com/DominikScholz/open-bot-avatar/commit/5e64c081971eb296f562544641bad37d40fb36b6).
 The portable definition remains **contract version 1**.
 
+Major and minor versions follow upstream. Patch releases can include native-only fixes, so patch numbers can differ.
+The linked upstream revision identifies the engine used by this release. See the [changelog](CHANGELOG.md) for upgrade notes.
+
 ## Modules
 
 | Artifact | Contents | Depends on |
@@ -19,13 +22,13 @@ Build with JDK 17–25 and Android SDK 36. The Compose module fails on JDK 27.
 
 ## Add the library
 
-The library isn't published to a Maven repository. Use a pinned checkout for the features documented here:
+The library isn't published to a Maven repository. Use a checkout of the `0.3.0` release:
 
 1. From your app's root directory, clone and check out the implementation:
 
    ```sh
    git clone https://github.com/cheetahbyte/open-bot-avatar-kt.git third_party/open-bot-avatar-kt
-   git -C third_party/open-bot-avatar-kt checkout aa95598a5c2533cd249d0e458e7af9743e29b004
+   git -C third_party/open-bot-avatar-kt checkout 0.3.0
    ```
 
 2. Include the checkout in your app's `settings.gradle.kts`:
@@ -38,12 +41,11 @@ The library isn't published to a Maven repository. Use a pinned checkout for the
 
    ```kotlin
    dependencies {
-       implementation("re.leob.openbotavatar.kt:open-bot-avatar-compose:0.1.0")
+       implementation("re.leob.openbotavatar.kt:open-bot-avatar-compose:0.3.0")
    }
    ```
 
-Gradle uses the included checkout; `0.1.0` is its current module version, not a new release.
-The older Git tag `0.1.0` tracks upstream 0.2.0 and doesn't include these features.
+Gradle uses the included release checkout for the declared dependency.
 
 This setup preserves configuration-cache support. Set `ANDROID_HOME` or create `third_party/open-bot-avatar-kt/local.properties` with the SDK location.
 The included build doesn't read your app's `local.properties`.
