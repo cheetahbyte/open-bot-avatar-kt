@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.5.0
+
+- Track Open Bot Avatar 0.5.1 at commit `396073383830bf7d1c6b83316a9ff2111192df03`; keep portable definition contract version 1.
+- Accept a custom state wherever a state is accepted: `AvatarStateDefinition`, `StateContext`, and `stateDefinition`. The six names are definitions too.
+- List a pose's marks as values: `Pose.marks` replaces `Pose.bang` and `Pose.dots`. Add `AvatarMark`, `MarkContext`, `MarkPart`, and `PoseMark`.
+- Hold host code to what can be drawn: unusable pose numbers, marks, and parts are replaced or left out, and a mark's outline is escaped in SVG.
+- Add the material extension point to Compose: `AvatarMaterial`, with `material` on `BotAvatar` and `drawAvatarFrame`. No built-in materials ship yet.
+- Make the volume model public for materials, and add `AvatarFrame.surface` and `FramePath.round`.
+- Mark custom states, marks, and materials with `@ExperimentalOpenBotAvatarApi`, an opt-in at warning level.
+- Build volumes about six times faster with upstream's 0.3.1 algorithm.
+- Seat each flat eye in the tangent plane of the surface under it, and hide it at the limb, as upstream does.
+- Keep a small body on screen when a change from one mark to another is interrupted, until a mark shows.
+- Flatten arcs with the same bits as upstream, which settles ties in five side slices of the light bulb.
+- Regenerate the catalog (palette, rocket, and witch hat changed) and the parity fixtures.
+
+### Upgrade from 0.3.0
+
+Recompile consumers. Calls that pass one of the six states compile unchanged.
+`FrameOptions.state`, `PoseInput.state`, and `MoodState.state` now read as `AvatarStateDefinition?`; compare them by `id`.
+Build poses with `marks` instead of `bang` and `dots`, which remain as deprecated, read-only properties.
+Code that builds an `AvatarFrame` by hand needs the new `surface`. Custom renderers must escape a mark's `d` in markup.
+The avatar definition contract remains version 1.
+
 ## 0.3.0
 
 - Align major and minor versions with upstream; native patch releases can have different patch numbers.
