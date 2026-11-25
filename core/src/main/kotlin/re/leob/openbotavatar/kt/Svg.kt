@@ -37,7 +37,8 @@ public fun AvatarFrame.toSvg(size: Double? = null): String {
         append("""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"$dims role="img" aria-label="$label" overflow="visible">""")
         append("<title>$label</title><defs>")
         for (p in paths) {
-            append("""<path id="${p.id}" d="${p.d}"${if (p.evenOdd) " fill-rule=\"evenodd\"" else ""}/>""")
+            // A mark's outline is the host's own text: it is escaped. Every other path is serialized from numbers.
+            append("""<path id="${p.id}" d="${escape(p.d)}"${if (p.evenOdd) " fill-rule=\"evenodd\"" else ""}/>""")
         }
         append("""</defs><g transform="${root.css()}" fill="$color">""")
         for (s in shapes) {

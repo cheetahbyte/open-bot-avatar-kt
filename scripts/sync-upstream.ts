@@ -7,8 +7,10 @@ import { gzipSync } from 'node:zlib';
 const upstream = resolve(process.argv[2] ?? '');
 const root = resolve(import.meta.dirname, '..');
 const src = join(upstream, 'packages/core/src');
-const { examples, renderAvatarSvg, validateAvatar, computePose, createAnimator, pointerGaze } = await import(join(src, 'index.ts'));
-const { liveFrame } = await import(join(src, 'render.ts'));
+const { examples, renderAvatarSvg, validateAvatar, computePose, createAnimator, pointerGaze, stateDefinition } = await import(join(src, 'index.ts'));
+const { liveFrame, preparedVolume } = await import(join(src, 'render.ts'));
+const { outlineModel } = await import(join(src, 'dom/materials/marks.ts'));
+const { BANG, DOTS } = await import(join(src, 'marks.ts'));
 const { hashString, STATES, MOODS } = await import(join(src, 'motion.ts'));
 const { eyeOutline, eyePath } = await import(join(src, 'eyes.ts'));
 const { execFileSync } = await import('node:child_process');
@@ -156,9 +158,155 @@ const eyes = [{ arc: 0, slit: 1 }, { arc: 0.3, slit: 0 }, { arc: 0.4, slit: 0.6 
 const detailedFrames = ['mug', 'ghost', 'controller'].filter((id) => defs.some((d) => d.id === id)).flatMap((id) =>
   thorough.map((options) => ({ id, options: { ...options, size: 64 }, frame: liveFrame(defs.find((d) => d.id === id), { ...options, size: 64 }) })));
 
+// States and marks of a host's own. ParityTest mirrors each one by its key (CustomStates.kt); a fixture
+// names them by it, and `resolved` puts the definition in its place before upstream sees the options.
+const hookPath = (u: number) => {
+  const arc = (r: number, large: 0 | 1, sweep: 0 | 1, x: number, y: number) => `A${r * u} ${r * u} 0 ${large} ${sweep} ${x * u} ${y * u}`;
+  return [`M${-0.26 * u} ${-0.062 * u}`, arc(0.26, 1, 1, 0.13, 0.163), arc(0.08, 0, 0, 0.09, 0.232), arc(0.09, 0, 1, -0.09, 0.232),
+    arc(0.26, 0, 1, 0.04, 0.007), arc(0.08, 1, 0, -0.08, -0.062), arc(0.09, 0, 1, -0.26, -0.062), 'Z'].join('');
+};
+const hookBox = (u: number) => ({ x: -0.26 * u, y: -0.3225 * u, w: 0.52 * u, h: 0.645 * u });
+// The question mark of upstream's README.
+const question = {
+  id: 'question',
+  parts: ({ unit: u, time }: { unit: number; time: number }) => {
+    const w = 0.52 * u, h = 0.645 * u, r = 0.115 * u, gap = 0.1 * u;
+    const dot = `M${r} 0A${r} ${r} 0 1 1 ${-r} 0A${r} ${r} 0 1 1 ${r} 0Z`;
+    const top = -(h + gap + 2 * r) / 2;
+    const turn = 0.12 * Math.sin(2.4 * time);
+    return [
+      { shape: 'question-hook', d: hookPath(u), box: { x: -w / 2, y: -h / 2, w, h }, x: 0, y: top + h / 2, turn, scale: 1 },
+      { shape: 'question-dot', d: dot, box: { x: -r, y: -r, w: 2 * r, h: 2 * r }, x: 0, y: -top - r, turn, scale: 1, round: true },
+    ];
+  },
+};
+const SQUARE = 'M-9 -9H9V9H-9Z', SMALL = 'M-5 -5H5V5H-5Z';
+const part = (shape: string, d = SQUARE, extra: object = {}) => ({ shape, d, box: { x: -9, y: -9, w: 18, h: 18 }, x: 0, y: 0, turn: 0, scale: 1, ...extra });
+const mark = (id: string, ...parts: unknown[]) => ({ id, parts: () => parts });
+const showing = (...parts: unknown[]) => () => ({ marks: [{ mark: mark('custom', ...parts), weight: 1 }] });
+const third = mark('third', part('third'));
+const NAN = Number.NaN;
+const custom: Record<string, { id: string; startAge?: number; pose: (ctx: any) => any }> = {
+  asking: { id: 'asking', pose: () => ({ marks: [{ mark: question, weight: 1 }] }) },
+  listening: { id: 'listening', pose: (ctx) => ({ ...ctx.rest(), roll: 6 + ctx.wave(4), squintL: 0.3, squintR: 0.3 }) },
+  // Slower, and reading everything else the context has.
+  context: { id: 'context', pose: (ctx) => ({ ...ctx.rest(2), lift: -ctx.live * ctx.sway, roll: (ctx.stateAge ?? -1) + ctx.time / 10, squintL: ctx.mood === 'happy' ? 0.5 : 0, squintR: ctx.t / 100, yaw: ctx.base.yaw + (ctx.seed % 7) / 10 }) },
+  // A built-in id under another definition, and a variant built on a built-in one.
+  idleLean: { id: 'idle', pose: (ctx) => ({ ...ctx.rest(), roll: 12 }) },
+  variant: { id: 'variant', pose: (ctx) => ({ ...stateDefinition('blocked').pose(ctx), marks: [{ mark: question, weight: 1 }] }) },
+  late: { id: 'late', startAge: 2, pose: (ctx) => ({ roll: ctx.stateAge ?? 0 }) },
+  startNaN: { id: 'startNaN', startAge: NAN, pose: () => ({}) },
+  startEarly: { id: 'startEarly', startAge: -5, pose: () => ({}) },
+  lean2: { id: 'lean', pose: () => ({ roll: 2 }) },
+  lean12: { id: 'lean', pose: () => ({ roll: 12 }) },
+  third: { id: 'third', pose: () => ({ marks: [{ mark: third, weight: 1 }] }) },
+  thirds: { id: 'thirds', pose: () => ({ marks: [BANG, DOTS, third].map((m) => ({ mark: m, weight: 1 / 3 })) }) },
+  eyes: { id: 'eyes', pose: () => ({ eyes: { arc: 0.3, slit: 0.5 }, blink: 0.4, gazeX: 1.4, ribbons: 0.8, sweep: 2, cage: 1 }) },
+  // Fields no renderer could draw keep the base's.
+  oddPose: { id: 'oddPose', pose: () => ({ yaw: NAN, pitch: Infinity, roll: 4, lift: -Infinity, sx: NAN, sy: NAN, gazeX: NAN, gazeY: 0.5, blink: NAN, squintL: NAN, squintR: 0.2, ribbons: NAN, cage: NAN, sweep: NAN, eyes: { arc: 1, slit: NAN } }) },
+  oddMarks: { id: 'oddMarks', pose: () => ({ marks: [{ mark: third, weight: NAN }, { mark: third, weight: 0 }, { mark: third, weight: -1 }, { mark: DOTS, weight: 7 }, { mark: BANG, weight: 0.5 }, { mark: BANG, weight: 0.2 }] }) },
+  oddParts: { id: 'oddParts', pose: showing(part('a', ''), part('b', SQUARE, { box: { x: 0, y: 0, w: NAN, h: 4 } }), part('c', SQUARE, { box: { x: 0, y: 0, w: 0, h: 4 } }), part('d', SQUARE, { box: { x: Infinity, y: 0, w: 4, h: 4 } }),
+    part('whole'), part('slip', SQUARE, { x: NAN, y: Infinity, turn: NAN, scale: -Infinity }), part('moved', SQUARE, { x: 3, y: -4, turn: 0.5, scale: 2, round: true })) },
+  // Names that are numbers, or no names at all, and two outlines under one name.
+  names: { id: 'names', pose: showing(part('0'), part('12'), part('a b'), part('a/b', SMALL), part('line\n'), part(''), part('same'), part('same', SMALL), part('same')) },
+  markup: { id: 'markup', pose: showing(part('"><script>alert(1)</script>', 'M0 0L5 5Z"/><script>alert(2)</script>')) },
+  markOne: { id: 'markOne', pose: () => ({ marks: [{ mark: mark('m', part('one')), weight: 1 }] }) },
+  markTwo: { id: 'markTwo', pose: () => ({ marks: [{ mark: mark('m', part('two', SMALL)), weight: 1 }] }) },
+};
+for (const [key, definition] of Object.entries(custom)) Object.assign(definition, { key });
+const resolved = (value: unknown): any => {
+  if (Array.isArray(value)) return value.map(resolved);
+  if (typeof value !== 'object' || value === null) return value;
+  return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, k === 'state' ? custom[v as string] ?? v : resolved(v)]));
+};
+const keys = Object.keys(custom);
+const blends = [
+  ...STATES.flatMap((from: string) => [0.2, 0.5, 0.9].flatMap((t) => ['asking', 'listening'].flatMap((key) =>
+    [{ state: key, stateAge: 1.2, blend: { from: { state: from, mood: 'happy', age: 1.3 }, t } }, { state: from, stateAge: 1.2, blend: { from: { state: key, age: 0.7 }, t } }]))),
+  { state: 'asking', blend: { from: { state: 'listening', age: 2 }, t: 0.4 } },
+  // One id: the age runs on on both sides. Another: the one that was left is held at the age it had.
+  { state: 'idleLean', stateAge: 5, blend: { from: { state: 'idle', mood: 'happy', age: 3 }, t: 0.5 } },
+  { state: 'late', stateAge: 5, blend: { from: { state: 'late', mood: 'happy', age: 3 }, t: 0.5 } },
+  { state: 'late', stateAge: 5, blend: { from: { state: 'context', age: 3 }, t: 0.5 } },
+  { state: 'markTwo', blend: { from: { state: 'markOne' }, t: 0.3 } },
+  { state: 'oddMarks', blend: { from: { state: 'third' }, t: 0.3 } },
+];
+const customPoses: unknown[] = [];
+for (const seed of ['mug', 'ghost'].map(hashString)) {
+  for (const mood of MOODS) for (const reducedMotion of [false, true]) {
+    for (const time of [0, 1.3, 7.77, 301.5]) {
+      for (const key of keys) for (const extra of [{}, { stateAge: 4.5 }, { gaze: { x: 1, y: -0.4, weight: 0.6 } }, { view: { yaw: 0.4, pitch: -0.1 } }]) {
+        const input = { seed: seed | 0, time, state: key, mood, reducedMotion, ...extra };
+        customPoses.push({ input, pose: computePose({ ...resolved(input), seed }) });
+      }
+    }
+    for (const look of blends) {
+      const input = { seed: seed | 0, time: 2.6, mood, reducedMotion, ...look };
+      customPoses.push({ input, pose: computePose({ ...resolved(input), seed }) });
+    }
+  }
+}
+// A change from one mark to another, interrupted, then left: the body stays, small, until a mark shows.
+const interrupted = [0.1, 0.3, 0.45, 0.5, 0.6, 0.8].flatMap((u) => [0, 0.1, 0.25, 0.4, 0.6, 0.9].map((t) => (
+  { state: 'idle', time: 1, motionBlend: { from: { state: 'blocked', age: 0.2, blend: { from: { state: 'thinking', age: 2 }, t: u } }, t } })));
+const customOptions = [
+  ...keys.flatMap((key) => MOODS.flatMap((mood: string) => [false, true].map((reducedMotion) => ({ state: key, mood, reducedMotion, time: 2.2, stateAge: 1.1 })))),
+  ...blends.map(({ blend, ...look }) => ({ ...look, time: 3.1, motionBlend: blend })),
+  ...interrupted,
+  ...interrupted.map((o) => ({ ...o, state: 'third' })),
+  { state: 'asking', time: 1, depth: 0 }, { state: 'listening', time: 1, depth: 0 },
+  { state: 'listening', time: 1, view: { yaw: 1.4, pitch: 0.2 } }, { state: 'listening', time: 1, view: { yaw: 2.9, pitch: 0 } },
+];
+const customFrames: unknown[] = [], customSvgs: unknown[] = [];
+for (const id of ['mug', 'controller']) {
+  const definition = defs.find((d) => d.id === id);
+  for (const options of customOptions) {
+    customFrames.push({ id, options: { ...options, size: 64 }, frame: liveFrame(definition, { ...resolved(options), size: 64 }) });
+    customSvgs.push({ id, options, svg: renderAvatarSvg(definition, resolved(options)) });
+  }
+}
+// Each run on an animator of its own: mounting, changing, changing back, the same id again as a newer definition.
+const customAnimator = [
+  ...['late', 'startNaN', 'startEarly', 'asking', 'done'].map((state) => [{ now: 500, state }, { now: 900, state }]),
+  [{ now: 0, state: 'idle' }, { now: 1000, state: 'asking' }, { now: 1100, state: 'asking' }, { now: 2000, state: 'asking' }, { now: 2500, state: 'blocked' }, { now: 2600, state: 'listening' }, { now: 2700, state: 'idle' }],
+  [{ now: 0, state: 'lean2' }, { now: 100, state: 'lean12' }, { now: 200, state: 'idle' }, { now: 300, state: 'idle' }],
+  [{ now: 0, state: 'idle' }, { now: 100, state: 'lean2' }, { now: 200, state: 'lean12' }, { now: 260, state: 'lean2', mood: 'happy' }, { now: 400, state: 'working' }],
+  [{ now: 0, state: 'idle' }, { now: 700, state: 'idleLean' }, { now: 900, state: 'idle', mood: 'happy' }],
+  [{ now: 0, state: 'thinking' }, { now: 1000, state: 'blocked' }, { now: 1150, state: 'idle' }, { now: 1250, state: 'idle' }, { now: 1400, state: 'asking' }],
+  [{ now: 0, state: 'asking', reducedMotion: true }, { now: 100, state: 'listening', reducedMotion: true }],
+].map((run) => {
+  const own = createAnimator();
+  return run.map((given) => {
+    const input = { target: null, reducedMotion: false, ...given };
+    const step = own.step(resolved(input));
+    return { input, step, pose: computePose({ seed: 7, time: input.now / 1000, state: resolved(input).state, mood: resolved(input).mood, stateAge: step.stateAge, reducedMotion: input.reducedMotion, blend: step.motionBlend }) };
+  });
+});
+
+// The model a renderer that draws in 3D is given, and the models of marks' outlines.
+const modelOf = (vol: any) => ({
+  bounds: vol.bounds, eyePart: vol.eyePart, eyeZ: vol.eyeZ, eyeScale: vol.eyeScale, eyePlanes: vol.eyePlanes,
+  parts: vol.parts.map((p: any) => ({
+    kind: p.kind, bounds: p.bounds, center: p.center, thickness: p.thickness, depth: p.depth, rxy: p.rxy, rz: p.rz, axis: p.axis ?? null,
+    slices: [...p.zSlices, ...p.xSlices].map((s: any) => [s.at, s.inset, s.box.x, s.box.y, s.box.w, s.box.h]),
+    heights: [0.2, 0.35, 0.5, 0.65, 0.8].flatMap((v) => [0.2, 0.35, 0.5, 0.65, 0.8].map((h) => p.height(p.bounds.minX + h * (p.bounds.maxX - p.bounds.minX), p.bounds.minY + v * (p.bounds.maxY - p.bounds.minY)))),
+  })),
+});
+const volumes = defs.flatMap((d) => [0, 6, 14].map((depth) => ({ id: d.id, depth, model: modelOf(preparedVolume(d, depth).vol) })));
+const outlines = [
+  [hookPath(40), hookBox(40)], [hookPath(60), hookBox(60)], [hookPath(70), hookBox(70)], [SQUARE, { x: -9, y: -9, w: 18, h: 18 }], [SQUARE, { x: -9, y: -9, w: 36, h: 18 }],
+  ['M-20 -5H-10V5H-20ZM10 -5H20V5H10Z', { x: -20, y: -5, w: 40, h: 10 }], ['M-20 -5H-10V5H-20ZM10 -5V5H20V-5Z', { x: -20, y: -5, w: 40, h: 10 }],
+  ['M-30 0Q0 -40 30 0Q0 40 -30 0Z', { x: -30, y: -20, w: 60, h: 40 }], ['M-30 0Q0 -200 30 0Q0 200 -30 0Z', { x: -30, y: -100, w: 60, h: 200 }],
+  ['M-30 0C-30 -20 30 -20 30 0C30 20 -30 20 -30 0Z', { x: -30, y: -15, w: 60, h: 30 }],
+  ['M0 0L10 0Z', { x: 0, y: 0, w: 10, h: 1 }], ['not a path', { x: 0, y: 0, w: 10, h: 10 }],
+].map(([d, box]) => {
+  const model = outlineModel(d, box);
+  return { d, box, model: model && { key: model.key, scale: model.scale, cx: model.cx, cy: model.cy, volume: modelOf(model.volume) } };
+});
+
 const gazes = [[0, 0], [300, 90], [-40, 500], [50, 50]].map(([x, y]) => ({ x, y, gaze: pointerGaze({ x, y }, { left: 10, top: 20, width: 96, height: 96 }, { x: 0.5, y: 0.42 }) }));
 
 const hashes = ['', 'a', 'mug', 'controller'].map((s) => ({ s, hash: hashString(s) | 0 }));
-const json = JSON.stringify({ upstreamRevision, upstreamVersion, defs, svgs, frames, detailedFrames, eyes, invalid, poses, animator: script, gazes, hashes });
+const json = JSON.stringify({ upstreamRevision, upstreamVersion, defs, svgs, frames, detailedFrames, eyes, invalid, poses, animator: script, gazes, hashes, customPoses, customFrames, customSvgs, customAnimator, volumes, outlines });
 writeFileSync(join(root, 'core/src/test/resources/parity.json.gz'), gzipSync(json, { level: 9 }));
 console.log(`${defs.length} definitions, ${svgs.length} svgs, ${(json.length / 1e6).toFixed(1)} MB raw`);

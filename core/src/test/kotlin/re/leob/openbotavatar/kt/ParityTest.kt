@@ -20,6 +20,11 @@ import org.junit.Assert.assertSame
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import re.leob.openbotavatar.kt.geometry.Bounds
+import re.leob.openbotavatar.kt.volume.OutlineModel
+import re.leob.openbotavatar.kt.volume.Volume
+import re.leob.openbotavatar.kt.volume.analyzeBody
+import re.leob.openbotavatar.kt.volume.buildVolume
 
 /** Holds the port to the TypeScript engine, through fixtures from scripts/sync-upstream.ts. */
 class ParityTest {
@@ -36,13 +41,17 @@ class ParityTest {
     private fun JsonObject.text(key: String): String? = get(key)?.jsonPrimitive?.content
 
     private fun moodOf(name: String?): AvatarMood? = name?.let { AvatarMood.valueOf(it.uppercase()) }
-    private fun stateOf(name: String?): AvatarState? = name?.let { AvatarState.valueOf(it.uppercase()) }
+    private fun stateOf(name: String?): AvatarStateDefinition? = name?.let { customStates[it] ?: AvatarState.valueOf(it.uppercase()) }
+
+    /** A state as upstream holds it: a name, or a definition with the key the fixtures name it by. */
+    private fun definitionOf(e: JsonElement?): AvatarStateDefinition? =
+        stateOf(if (e is JsonObject) e.text("key") else e?.jsonPrimitive?.content)
     private fun motionOf(name: String?): AvatarMotion? = name?.let { AvatarMotion.valueOf(it.uppercase()) }
 
     private fun stateOf(e: JsonElement): MoodState {
         val o = e as? JsonObject ?: return MoodState(motion = motionOf(e.jsonPrimitive.content))
         return MoodState(mood = moodOf(o.text("mood")), blend = blendOf(o["blend"]),
-            state = stateOf(o.text("state")), age = o.number("age"), motion = motionOf(o.text("motion")))
+            state = definitionOf(o["state"]), age = o.number("age"), motion = motionOf(o.text("motion")))
     }
 
     private fun blendOf(e: JsonElement?): AvatarMoodBlend? {
@@ -55,10 +64,13 @@ class ParityTest {
         return AvatarGaze(o.number("x")!!, o.number("y")!!, o.number("weight"))
     }
 
+    private fun viewOf(e: JsonElement?): AvatarView? =
+        (e as? JsonObject)?.let { AvatarView(it.number("yaw")!!, it.number("pitch")!!) }
+
     private fun optionsOf(o: JsonObject) = FrameOptions(
         color = o.text("color"),
         eyeColor = o.text("eyeColor"),
-        view = (o["view"] as? JsonObject)?.let { AvatarView(it.number("yaw")!!, it.number("pitch")!!) },
+        view = viewOf(o["view"]),
         time = o.number("time") ?: 0.0,
         gaze = gazeOf(o["gaze"]),
         mood = moodOf(o.text("mood")),
@@ -90,8 +102,8 @@ class ParityTest {
 
     @Test
     fun fixturesIdentifyThePinnedUpstream() {
-        assertEquals("0.3.0", fixtures.text("upstreamVersion"))
-        assertEquals("5e64c081971eb296f562544641bad37d40fb36b6", fixtures.text("upstreamRevision"))
+        assertEquals("0.5.1", fixtures.text("upstreamVersion"))
+        assertEquals("396073383830bf7d1c6b83316a9ff2111192df03", fixtures.text("upstreamRevision"))
     }
 
     @Test
@@ -99,9 +111,8 @@ class ParityTest {
         assertTrue(validateAvatar("{not json") is ValidationResult.Invalid)
     }
 
-    @Test
-    fun svgMatchesUpstream() {
-        for (case in fixtures.list("svgs").map { it.jsonObject }) {
+    private fun assertSvgs(fixture: String) {
+        for (case in fixtures.list(fixture).map { it.jsonObject }) {
             val options = case.getValue("options").jsonObject
             val svg = renderAvatarSvg(
                 definitions.getValue(case.text("id")!!),
@@ -112,6 +123,12 @@ class ParityTest {
             assertSameMarkup("${case.text("id")} $options", case.text("svg")!!, svg)
         }
     }
+
+    @Test
+    fun svgMatchesUpstream() = assertSvgs("svgs")
+
+    @Test
+    fun customSvgMatchesUpstream() = assertSvgs("customSvgs")
 
     @Test
     fun liveFramesKeepTheSameSlices() {
@@ -147,34 +164,48 @@ class ParityTest {
         }
     }
 
+    private fun poseInputOf(i: JsonObject) = PoseInput(
+        seed = i.getValue("seed").jsonPrimitive.int,
+        time = i.number("time")!!,
+        mood = moodOf(i.text("mood")),
+        state = stateOf(i.text("state")),
+        stateAge = i.number("stateAge"),
+        motion = motionOf(i.text("motion")),
+        gaze = gazeOf(i["gaze"]),
+        view = viewOf(i["view"]),
+        reducedMotion = i.getValue("reducedMotion").jsonPrimitive.boolean,
+        blend = blendOf(i["blend"]),
+    )
+
+    private fun assertPose(context: String, e: JsonObject, pose: Pose) {
+        val fields = mapOf(
+            "yaw" to pose.yaw, "pitch" to pose.pitch, "roll" to pose.roll, "lift" to pose.lift,
+            "sx" to pose.sx, "sy" to pose.sy, "gazeX" to pose.gazeX, "gazeY" to pose.gazeY,
+            "blink" to pose.blink, "squintL" to pose.squintL, "squintR" to pose.squintR,
+            "ribbons" to pose.ribbons, "cage" to pose.cage, "sweep" to pose.sweep,
+        )
+        for ((name, value) in fields) assertEquals("$name in $context", e.number(name)!!, value, 1e-9)
+        val eyes = e.getValue("eyes").jsonObject
+        assertEquals("eyes.arc in $context", eyes.number("arc")!!, pose.eyes.arc, 1e-9)
+        assertEquals("eyes.slit in $context", eyes.number("slit")!!, pose.eyes.slit, 1e-9)
+        val marks = e.list("marks").map { it.jsonObject }
+        assertEquals("marks in $context", marks.map { it.getValue("mark").jsonObject.text("id") }, pose.marks.map { it.mark.id })
+        marks.forEachIndexed { k, m -> assertEquals("weight $k in $context", m.number("weight")!!, pose.marks[k].weight, 1e-9) }
+    }
+
     @Test
     fun posesMatchUpstream() {
         for (case in fixtures.list("poses").map { it.jsonObject }) {
-            val i = case.getValue("input").jsonObject
-            val pose = computePose(
-                PoseInput(
-                    seed = i.getValue("seed").jsonPrimitive.int,
-                    time = i.number("time")!!,
-                    mood = moodOf(i.text("mood")),
-                    state = stateOf(i.text("state")),
-                    stateAge = i.number("stateAge"),
-                    motion = motionOf(i.text("motion")),
-                    gaze = gazeOf(i["gaze"]),
-                    reducedMotion = i.getValue("reducedMotion").jsonPrimitive.boolean,
-                    blend = blendOf(i["blend"]),
-                ),
-            )
-            val e = case.getValue("pose").jsonObject
-            val fields = mapOf(
-                "yaw" to pose.yaw, "pitch" to pose.pitch, "roll" to pose.roll, "lift" to pose.lift,
-                "sx" to pose.sx, "sy" to pose.sy, "gazeX" to pose.gazeX, "gazeY" to pose.gazeY,
-                "blink" to pose.blink, "squintL" to pose.squintL, "squintR" to pose.squintR,
-                "ribbons" to pose.ribbons, "cage" to pose.cage, "sweep" to pose.sweep, "bang" to pose.bang, "dots" to pose.dots,
-            )
-            for ((name, value) in fields) assertEquals("$name in $i", e.number(name)!!, value, 1e-9)
-            val eyes = e.getValue("eyes").jsonObject
-            assertEquals("eyes.arc in $i", eyes.number("arc")!!, pose.eyes.arc, 1e-9)
-            assertEquals("eyes.slit in $i", eyes.number("slit")!!, pose.eyes.slit, 1e-9)
+            val input = case.getValue("input").jsonObject
+            assertPose("$input", case.getValue("pose").jsonObject, computePose(poseInputOf(input)))
+        }
+    }
+
+    @Test
+    fun customPosesMatchUpstream() {
+        for (case in fixtures.list("customPoses").map { it.jsonObject }) {
+            val input = case.getValue("input").jsonObject
+            assertPose("$input", case.getValue("pose").jsonObject, computePose(poseInputOf(input)))
         }
     }
 
@@ -182,31 +213,52 @@ class ParityTest {
     fun animatorMatchesUpstream() {
         val animator = AvatarAnimator()
         for (case in fixtures.list("animator").map { it.jsonObject }) {
-            val i = case.getValue("input").jsonObject
             if (case["reset"]?.jsonPrimitive?.booleanOrNull == true) animator.reset()
-            val target = (i["target"] as? JsonObject)?.let { LookDirection(it.number("x")!!, it.number("y")!!) }
-            val step = animator.step(
-                now = i.number("now")!!,
-                mood = moodOf(i.text("mood")),
-                state = stateOf(i.text("state")),
-                motion = motionOf(i.text("motion")),
-                target = target,
-                reducedMotion = i["reducedMotion"]?.jsonPrimitive?.booleanOrNull == true,
-                hold = i["hold"]?.jsonPrimitive?.booleanOrNull == true,
-            )
-            val e = case.getValue("step").jsonObject
-            assertEquals(e.getValue("moving").jsonPrimitive.boolean, step.moving)
-            val gaze = e["gaze"] as? JsonObject
-            assertEquals(gaze == null, step.gaze == null)
-            assertEquals(e["motionBlend"] == null, step.moodBlend == null)
-            if (gaze != null) {
-                assertEquals(gaze.number("x")!!, step.gaze!!.x, 1e-9)
-                assertEquals(gaze.number("y")!!, step.gaze.y, 1e-9)
-                assertEquals(gaze.number("weight")!!, step.gaze.weight!!, 1e-9)
-            }
-            assertEquals(blendOf(e["motionBlend"]), step.moodBlend)
-            assertEquals("stateAge in $i", e.number("stateAge")!!, step.stateAge, 1e-12)
+            assertStep(animator, case)
         }
+    }
+
+    @Test
+    fun customStatesAnimateAsUpstream() {
+        for (run in fixtures.list("customAnimator")) {
+            val animator = AvatarAnimator()
+            for (case in run.jsonArray.map { it.jsonObject }) {
+                val step = assertStep(animator, case)
+                val i = case.getValue("input").jsonObject
+                val pose = computePose(
+                    PoseInput(7, i.number("now")!! / 1000, moodOf(i.text("mood")), state = stateOf(i.text("state")), stateAge = step.stateAge,
+                        reducedMotion = i.getValue("reducedMotion").jsonPrimitive.boolean, blend = step.moodBlend),
+                )
+                assertPose("$i", case.getValue("pose").jsonObject, pose)
+            }
+        }
+    }
+
+    private fun assertStep(animator: AvatarAnimator, case: JsonObject): AnimatorStep {
+        val i = case.getValue("input").jsonObject
+        val target = (i["target"] as? JsonObject)?.let { LookDirection(it.number("x")!!, it.number("y")!!) }
+        val step = animator.step(
+            now = i.number("now")!!,
+            mood = moodOf(i.text("mood")),
+            state = stateOf(i.text("state")),
+            motion = motionOf(i.text("motion")),
+            target = target,
+            reducedMotion = i["reducedMotion"]?.jsonPrimitive?.booleanOrNull == true,
+            hold = i["hold"]?.jsonPrimitive?.booleanOrNull == true,
+        )
+        val e = case.getValue("step").jsonObject
+        assertEquals("moving in $i", e.getValue("moving").jsonPrimitive.boolean, step.moving)
+        val gaze = e["gaze"] as? JsonObject
+        assertEquals(gaze == null, step.gaze == null)
+        assertEquals(e["motionBlend"] == null, step.moodBlend == null)
+        if (gaze != null) {
+            assertEquals(gaze.number("x")!!, step.gaze!!.x, 1e-9)
+            assertEquals(gaze.number("y")!!, step.gaze.y, 1e-9)
+            assertEquals(gaze.number("weight")!!, step.gaze.weight!!, 1e-9)
+        }
+        assertEquals("blend in $i", blendOf(e["motionBlend"]), step.moodBlend)
+        assertEquals("stateAge in $i", e.number("stateAge")!!, step.stateAge, 1e-12)
+        return step
     }
 
     @Test
@@ -234,9 +286,29 @@ class ParityTest {
             assertEquals("box.$key", e.number(key)!!, value, 1e-9)
     }
 
+    private fun assertMark(mark: JsonObject, actual: EyeMark) {
+        when (actual) {
+            is EyeMark.Path -> { assertEquals("path", mark.text("shape")); assertSameMarkup("eye", mark.text("d")!!, actual.d) }
+            is EyeMark.Arc -> {
+                assertEquals("arc", mark.text("shape")); assertSameMarkup("arc", mark.text("d")!!, actual.d)
+                assertEquals(mark.number("strokeWidth")!!, actual.strokeWidth, 1e-9)
+            }
+            is EyeMark.Pill -> {
+                assertEquals("pill", mark.text("shape"))
+                for ((k, v) in mapOf("x" to actual.x, "y" to actual.y, "width" to actual.width, "height" to actual.height, "radius" to actual.radius))
+                    assertEquals(k, mark.number(k)!!, v, 1e-9)
+            }
+        }
+    }
+
     @Test
-    fun detailedFramesMatchUpstream() {
-        for (case in fixtures.list("detailedFrames").map { it.jsonObject }) {
+    fun detailedFramesMatchUpstream() = assertFrames("detailedFrames")
+
+    @Test
+    fun customFramesMatchUpstream() = assertFrames("customFrames")
+
+    private fun assertFrames(fixture: String) {
+        for (case in fixtures.list(fixture).map { it.jsonObject }) {
             val o = case.getValue("options").jsonObject
             val frame = PreparedAvatar.of(definitions.getValue(case.text("id")!!), o.number("depth") ?: DEFAULT_DEPTH)
                 .frame(optionsOf(o), o.number("size"))
@@ -252,6 +324,7 @@ class ParityTest {
                 assertSameMarkup("${case.text("id")} path $i in $o", path.text("d")!!, actual.d)
                 assertEquals(path.getValue("evenOdd").jsonPrimitive.boolean, actual.evenOdd)
                 assertBox(path.getValue("box"), actual.box)
+                assertEquals("round of ${actual.id} in $o", path["round"]?.jsonPrimitive?.boolean ?: false, actual.round)
             }
             assertEquals("shapes in $o", e.list("shapes").size, frame.shapes.size)
             e.list("shapes").forEachIndexed { i, s ->
@@ -263,18 +336,7 @@ class ParityTest {
                     is FrameShape.Eye -> {
                         assertEquals("eye", shape.text("kind"))
                         val mark = shape.getValue("mark").jsonObject
-                        when (val m = actual.mark) {
-                            is EyeMark.Path -> { assertEquals("path", mark.text("shape")); assertSameMarkup("eye", mark.text("d")!!, m.d) }
-                            is EyeMark.Arc -> {
-                                assertEquals("arc", mark.text("shape")); assertSameMarkup("arc", mark.text("d")!!, m.d)
-                                assertEquals(mark.number("strokeWidth")!!, m.strokeWidth, 1e-9)
-                            }
-                            is EyeMark.Pill -> {
-                                assertEquals("pill", mark.text("shape"))
-                                for ((k, v) in mapOf("x" to m.x, "y" to m.y, "width" to m.width, "height" to m.height, "radius" to m.radius))
-                                    assertEquals(k, mark.number(k)!!, v, 1e-9)
-                            }
-                        }
+                        assertMark(mark, actual.mark)
                     }
                     is FrameShape.Ribbon -> {
                         assertEquals("ribbon", shape.text("kind")); assertSameMarkup("ribbon", shape.text("d")!!, actual.d)
@@ -288,6 +350,82 @@ class ParityTest {
                     }
                 }
             }
+            val surface = e.getValue("surface").jsonObject
+            val view = surface.getValue("view").jsonObject
+            for ((k, v) in mapOf("cY" to frame.surface.view.cY, "sY" to frame.surface.view.sY, "cP" to frame.surface.view.cP,
+                "sP" to frame.surface.view.sP, "facing" to frame.surface.view.facing))
+                assertEquals("surface.$k in $o", view.number(k)!!, v, 1e-9)
+            assertEquals("surface.scale in $o", surface.number("scale")!!, frame.surface.scale, 1e-9)
+            assertEquals("surface.eyes in $o", surface.list("eyes").size, frame.surface.eyes.size)
+            surface.list("eyes").forEachIndexed { i, eye ->
+                val actual = frame.surface.eyes[i]
+                assertMark(eye.jsonObject.getValue("mark").jsonObject, actual.mark)
+                assertEquals(eye.jsonObject.number("dx")!!, actual.dx, 1e-9)
+                assertEquals(eye.jsonObject.number("dy")!!, actual.dy, 1e-9)
+            }
+        }
+    }
+
+    private fun assertModel(context: String, e: JsonObject, volume: Volume) {
+        fun number(name: String, expected: Double?, actual: Double?) {
+            assertEquals("$name of $context", expected == null, actual == null)
+            if (expected != null) assertEquals("$name of $context", expected, actual!!, 1e-9)
+        }
+        fun box(name: String, o: JsonObject, b: Bounds) {
+            for ((k, v) in mapOf("minX" to b.minX, "minY" to b.minY, "maxX" to b.maxX, "maxY" to b.maxY)) number("$name.$k", o.number(k), v)
+        }
+        box("bounds", e.getValue("bounds").jsonObject, volume.bounds)
+        assertEquals("eyePart of $context", e.getValue("eyePart").jsonPrimitive.int, volume.eyePart)
+        number("eyeScale", e.number("eyeScale"), volume.eyeScale)
+        e.list("eyeZ").forEachIndexed { i, z -> number("eyeZ", z.jsonPrimitive.double, volume.eyeZ[i]) }
+        e.list("eyePlanes").map { it.jsonObject }.forEachIndexed { i, plane ->
+            val actual = volume.eyePlanes[i]
+            for ((k, v) in mapOf("x" to actual.x, "y" to actual.y, "z" to actual.z, "dzdx" to actual.dzdx, "dzdy" to actual.dzdy))
+                number("eyePlanes.$k", plane.number(k), v)
+        }
+        assertEquals("parts of $context", e.list("parts").size, volume.parts.size)
+        e.list("parts").map { it.jsonObject }.forEachIndexed { i, part ->
+            val actual = volume.parts[i]
+            assertEquals("kind of $context", part.text("kind")!!.uppercase().replace('-', '_'), actual.kind.name)
+            box("part.bounds", part.getValue("bounds").jsonObject, actual.bounds)
+            number("center.x", part.list("center")[0].jsonPrimitive.double, actual.center.x)
+            number("center.y", part.list("center")[1].jsonPrimitive.double, actual.center.y)
+            for ((k, v) in mapOf("thickness" to actual.thickness, "depth" to actual.depth, "rxy" to actual.rxy, "rz" to actual.rz, "axis" to actual.axis))
+                number(k, part.number(k), v)
+            val slices = actual.zSlices + actual.xSlices
+            assertEquals("slices of $context", part.list("slices").size, slices.size)
+            part.list("slices").forEachIndexed { k, slice ->
+                val s = slices[k]
+                listOf(s.at, s.inset, s.box.x, s.box.y, s.box.w, s.box.h).forEachIndexed { n, v -> number("slice $k[$n]", slice.jsonArray[n].jsonPrimitive.double, v) }
+            }
+            val b = actual.bounds
+            val at = listOf(0.2, 0.35, 0.5, 0.65, 0.8)
+            val heights = at.flatMap { v -> at.map { h -> actual.height(b.minX + h * (b.maxX - b.minX), b.minY + v * (b.maxY - b.minY)) } }
+            part.list("heights").forEachIndexed { k, h -> number("height $k", h.jsonPrimitive.double, heights[k]) }
+        }
+    }
+
+    @Test
+    fun volumesMatchUpstream() {
+        for (case in fixtures.list("volumes").map { it.jsonObject }) {
+            val body = analyzeBody(definitions.getValue(case.text("id")!!).path)
+            val volume = buildVolume(definitions.getValue(case.text("id")!!).eyes, case.number("depth")!! / DEFAULT_DEPTH, body)
+            assertModel("${case.text("id")} at ${case.text("depth")}", case.getValue("model").jsonObject, volume)
+        }
+    }
+
+    @Test
+    fun outlineModelsMatchUpstream() {
+        for (case in fixtures.list("outlines").map { it.jsonObject }) {
+            val box = case.getValue("box").jsonObject
+            val d = case.text("d")!!
+            val model = OutlineModel.of(d, PathBox(box.number("x")!!, box.number("y")!!, box.number("w")!!, box.number("h")!!))
+            val e = case["model"] as? JsonObject
+            assertEquals(d, e == null, model == null)
+            if (e == null || model == null) continue
+            assertSameMarkup("key of $d", e.text("key")!!, model.key)
+            for ((k, v) in mapOf("scale" to model.scale, "cx" to model.cx, "cy" to model.cy)) assertEquals("$k of $d", e.number(k)!!, v, 1e-9)
+            assertModel(d, e.getValue("volume").jsonObject, model.volume)
         }
     }
 

@@ -99,7 +99,7 @@ public data class AnimatorStep(
 
 /** The per-avatar state a live renderer keeps between frames: the eased look and the eased mood change. */
 public class AvatarAnimator {
-    private class Shown(val state: AvatarState, val mood: AvatarMood, var blend: AvatarMoodBlend?, val since: Double, val began: Double)
+    private class Shown(var state: AvatarStateDefinition, val mood: AvatarMood, var blend: AvatarMoodBlend?, val since: Double, val began: Double)
 
     private var follow = FollowState.REST
     private var last: Double? = null
@@ -115,7 +115,7 @@ public class AvatarAnimator {
         target: LookDirection? = null,
         hold: Boolean = false,
         reducedMotion: Boolean = false,
-        state: AvatarState? = null,
+        state: AvatarStateDefinition? = null,
         motion: AvatarMotion? = null,
     ): AnimatorStep {
         val previous = last
@@ -130,14 +130,17 @@ public class AvatarAnimator {
 
         val look = resolveLook(state, mood, motion)
         val current = shown
-        if (current != null && (look.state != current.state || look.mood != current.mood)) {
+        val same = current != null && look.state.id == current.state.id
+        // The same state given again may be a newer definition of it: that one is on screen from now on.
+        if (current != null && same) current.state = look.state
+        if (current != null && (!same || look.mood != current.mood)) {
             val frozen = current.blend?.let { AvatarMoodBlend(it.from, moodProgress(now - current.since)) }
             val before = MoodState(current.mood, frozen, current.state, (now - current.began) / 1000)
             val blend = if (reducedMotion) null else AvatarMoodBlend(settleMood(before), 0.0)
-            shown = Shown(look.state, look.mood, blend, now, if (look.state == current.state) current.began else now)
+            shown = Shown(look.state, look.mood, blend, now, if (same) current.began else now)
         }
-        val active = shown ?: Shown(look.state, look.mood, null, now,
-            now - if (look.state == AvatarState.DONE) DONE_TURN_S * 1000 else 0.0).also { shown = it }
+        val active = shown ?: Shown(look.state, look.mood, null, now, now - max(0.0, look.state.startAge.finiteOr(0.0)) * 1000)
+            .also { shown = it }
         val t = if (reducedMotion) 1.0 else moodProgress(now - active.since)
         var moodBlend: AvatarMoodBlend? = null
         val blend = active.blend

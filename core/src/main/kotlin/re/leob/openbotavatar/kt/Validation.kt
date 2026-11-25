@@ -86,7 +86,7 @@ private fun checkBody(body: BodyAnalysis, eyes: AvatarEyes?, errors: MutableList
     }
     if (body.area < 600) errors.add("body fill area ${body.area} is too thin to carry eyes; must be at least 600 units²")
     if (eyes == null) return
-    eyesFit(body.polys, eyes, EYE_MARGIN)?.let { miss ->
+    eyesFit(body.rows, eyes, EYE_MARGIN)?.let { miss ->
         errors.add(
             "eyes must sit inside the body with ${plain(EYE_MARGIN)} units margin; point (${r1(miss.x)}, ${r1(miss.y)}) " +
                 "is outside or in a hole. Move eyes.x/y toward the widest solid area, reduce spacing or scale.",

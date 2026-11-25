@@ -35,7 +35,7 @@ import re.leob.openbotavatar.kt.AvatarEyes
 import re.leob.openbotavatar.kt.AvatarFrame
 import re.leob.openbotavatar.kt.AvatarGaze
 import re.leob.openbotavatar.kt.AvatarMood
-import re.leob.openbotavatar.kt.AvatarState
+import re.leob.openbotavatar.kt.AvatarStateDefinition
 import re.leob.openbotavatar.kt.AvatarMotion
 import re.leob.openbotavatar.kt.AvatarPlayer
 import re.leob.openbotavatar.kt.AvatarView
@@ -87,7 +87,8 @@ internal fun lookFrom(position: Offset, bounds: Rect, eyes: AvatarEyes, density:
  * The first build runs in the background and the avatar is empty until it finishes. An invalid
  * [definition] logs an error and draws nothing; run imported data through `validateAvatar` first.
  *
- * @param state what the bot is doing; changes ease from the current pose.
+ * @param state what the bot is doing: one of the six of `AvatarState`, or a definition of your own;
+ *   changes ease from the current pose.
  * @param mood how the bot feels, independently of its state.
  * @param stateAge optional explicit state clock; normally the player tracks it automatically.
  * @param depth volume from 0 (flat) to 14; 6 is natural.
@@ -98,6 +99,7 @@ internal fun lookFrom(position: Offset, bounds: Rect, eyes: AvatarEyes, density:
  * @param reducedMotion keep the body still and stop blinking.
  * @param still draw one calm frame and never animate, for thumbnails and lists.
  * @param label accessible name, by default the definition's name; `""` marks it decorative.
+ * @param material the body's finish; null is flat.
  */
 @Composable
 public fun BotAvatar(
@@ -114,9 +116,10 @@ public fun BotAvatar(
     reducedMotion: AvatarReducedMotion = AvatarReducedMotion.System,
     still: Boolean = false,
     label: String? = null,
-    state: AvatarState? = null,
+    state: AvatarStateDefinition? = null,
     stateAge: Double? = null,
     motion: AvatarMotion? = null,
+    material: AvatarMaterial? = null,
 ) {
     val prepared by rememberPreparedAvatar(definition, depth)
     val painter = remember { AvatarPainter() }
@@ -194,7 +197,7 @@ public fun BotAvatar(
             .then(if (tracksOwnPointer) Modifier.trackAvatarPointer(ownPointer) { placement.rect.topLeft } else Modifier),
     ) {
         // Reading the frame only here keeps animation out of composition and layout.
-        (stillFrame ?: frame.value)?.let { painter.paint(this, it, color, eyeColor) }
+        (stillFrame ?: frame.value)?.let { painter.paint(this, it, color, eyeColor, material) }
     }
 }
 

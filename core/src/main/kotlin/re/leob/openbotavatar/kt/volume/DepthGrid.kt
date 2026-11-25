@@ -1,26 +1,28 @@
 package re.leob.openbotavatar.kt.volume
 
 import re.leob.openbotavatar.kt.geometry.Bounds
+import re.leob.openbotavatar.kt.geometry.Contours
+import re.leob.openbotavatar.kt.geometry.EdgeBands
+import re.leob.openbotavatar.kt.geometry.EdgeIndex
 import re.leob.openbotavatar.kt.geometry.Field
 import re.leob.openbotavatar.kt.geometry.Point
-import re.leob.openbotavatar.kt.geometry.Polygons
-import re.leob.openbotavatar.kt.geometry.contourLoops
-import re.leob.openbotavatar.kt.geometry.forEachEdge
-import re.leob.openbotavatar.kt.geometry.insideRow
-import re.leob.openbotavatar.kt.geometry.segDist2
-import re.leob.openbotavatar.kt.geometry.simplifyLoop
+import re.leob.openbotavatar.kt.geometry.RUN
+import re.leob.openbotavatar.kt.geometry.RunRange
+import re.leob.openbotavatar.kt.geometry.SampleGrid
+import re.leob.openbotavatar.kt.geometry.runsOf
 import kotlin.math.ceil
-import kotlin.math.floor
 import kotlin.math.max
 import kotlin.math.min
-import kotlin.math.sqrt
 
 /** Thin regions, where no inscribed circle within THIN_REACH reaches radius THIN, get refinement slices. */
 private const val THIN = 4.0
 private const val THIN_REACH = 5.0
 private const val THIN_MARGIN = 2.0
 
-/** Sampled signed distance (positive inside) and height over a part's bounds. */
+/** How far a simplified outline may stray from the traced one. */
+private const val TOLERANCE = 0.04
+
+/** Sampled signed distance (positive inside) and surface height (0 outside) over a part's bounds. */
 internal class Grid(
     val x0: Double,
     val y0: Double,
@@ -31,133 +33,157 @@ internal class Grid(
     val h: DoubleArray,
 )
 
-private class EdgeIndex(polys: Polygons, b: Bounds) {
-    private val cell = 6.0
-    private val buckets = HashMap<Int, MutableList<Int>>()
-    private val edges = ArrayList<Double>()
-    private val ox = b.minX - 4
-    private val oy = b.minY - 4
-    private val span = ceil((max(b.maxX - b.minX, b.maxY - b.minY) + 8) / cell).toInt() + 1
-
-    init {
-        forEachEdge(polys) { p, q ->
-            val k = edges.size
-            edges.add(p.x)
-            edges.add(p.y)
-            edges.add(q.x)
-            edges.add(q.y)
-            for (cy in cellY(min(p.y, q.y))..cellY(max(p.y, q.y))) {
-                for (cx in cellX(min(p.x, q.x))..cellX(max(p.x, q.x))) {
-                    buckets.getOrPut(cy * span + cx) { ArrayList() }.add(k)
-                }
-            }
-        }
-    }
-
-    private fun cellX(x: Double) = max(0, min(span - 1, floor((x - ox) / cell).toInt()))
-    private fun cellY(y: Double) = max(0, min(span - 1, floor((y - oy) / cell).toInt()))
-
-    fun distance(x: Double, y: Double): Double {
-        val bx = cellX(x)
-        val by = cellY(y)
-        var best = Double.POSITIVE_INFINITY
-        for (r in 0 until span) {
-            for (cy in by - r..by + r) {
-                if (cy < 0 || cy >= span) continue
-                val edgeRow = cy == by - r || cy == by + r
-                val stride = if (edgeRow) 1 else 2 * r
-                var cx = bx - r
-                while (cx <= bx + r) {
-                    if (cx in 0 until span) {
-                        buckets[cy * span + cx]?.forEach { k ->
-                            val d = segDist2(x, y, edges[k], edges[k + 1], edges[k + 2], edges[k + 3])
-                            if (d < best) best = d
-                        }
-                    }
-                    cx += stride
-                }
-            }
-            if (best <= (r * cell) * (r * cell)) break
-        }
-        return sqrt(best)
-    }
-}
-
-internal fun sampleGrid(polys: Polygons, b: Bounds, step: Double, height: (Double, Double, Double) -> Double): Grid {
+private fun gridOver(b: Bounds, step: Double): SampleGrid {
     val pad = 1.0
-    val x0 = b.minX - pad
-    val y0 = b.minY - pad
-    val nx = ceil((b.maxX - b.minX + 2 * pad) / step).toInt() + 1
-    val ny = ceil((b.maxY - b.minY + 2 * pad) / step).toInt() + 1
-    val sd = DoubleArray(nx * ny)
-    val h = DoubleArray(nx * ny)
-    val index = EdgeIndex(polys, b)
-    val xs = DoubleArray(nx) { x0 + it * step }
-    val inside = BooleanArray(nx)
-    for (j in 0 until ny) {
-        val y = y0 + j * step
-        insideRow(polys, y, xs, inside)
-        for (i in 0 until nx) {
-            val d = index.distance(xs[i], y)
-            sd[j * nx + i] = if (inside[i]) d else -d
-            h[j * nx + i] = if (inside[i]) height(xs[i], y, d) else 0.0
+    return SampleGrid(
+        b.minX - pad,
+        b.minY - pad,
+        step,
+        ceil((b.maxX - b.minX + 2 * pad) / step).toInt() + 1,
+        ceil((b.maxY - b.minY + 2 * pad) / step).toInt() + 1,
+    )
+}
+
+internal fun sampleGrid(rows: EdgeBands, index: EdgeIndex, b: Bounds, step: Double, surface: Surface): Grid {
+    val g = gridOver(b, step)
+    val sd = index.distances(g)
+    val h = DoubleArray(sd.size)
+    val xs = DoubleArray(g.nx) { g.x0 + it * step }
+    val inside = BooleanArray(g.nx)
+    for (j in 0 until g.ny) {
+        val y = g.y0 + j * step
+        rows.insideRow(y, xs, inside)
+        for (i in 0 until g.nx) {
+            val k = j * g.nx + i
+            if (inside[i]) h[k] = surface.height(xs[i], y, sd[k]) else sd[k] = -sd[k]
         }
     }
-    return Grid(x0, y0, step, nx, ny, sd, h)
+    return Grid(g.x0, g.y0, step, g.nx, g.ny, sd, h)
 }
+
+/** Twice the largest inward distance over the samples of a grid like [sampleGrid]'s. */
+internal fun gridThickness(rows: EdgeBands, index: EdgeIndex, b: Bounds, step: Double): Double =
+    2 * index.widest(gridOver(b, step), rows)
 
 internal data class ThinBox(val i0: Int, val i1: Int, val j0: Int, val j1: Int, val top: Double)
 
-/** Continuous cross-section field: positive inside, zero at its edge, in roughly viewBox units. */
-internal typealias LevelField = (x: Double, y: Double, sd: Double, level: Double) -> Double
+/**
+ * A part's cross-section at a level, clipped to the outline (and to a box, if given), as loops.
+ *
+ * It is the zero contour of a field that is positive inside the cross-section, zero on its edge and
+ * roughly a distance in viewBox units: smooth across the rim, so contours interpolated between grid
+ * samples follow the real edge instead of the grid. The field is capped by the signed distance to
+ * the outline; both are continuous across it, so the smaller is too.
+ */
+internal fun interface LevelCut {
+    fun loops(level: Double, box: ThinBox?): List<List<Point>>
+}
 
-internal fun levelLoops(g: Grid, level: Double, field: LevelField, box: ThinBox?): List<List<Point>> {
-    val i0 = if (box != null) max(0, box.i0 - 1) else 0
-    val i1 = if (box != null) min(g.nx - 1, box.i1 + 1) else g.nx - 1
-    val j0 = if (box != null) max(0, box.j0 - 1) else 0
-    val j1 = if (box != null) min(g.ny - 1, box.j1 + 1) else g.ny - 1
+internal fun levelCuts(g: Grid, surface: Surface, contours: Contours): LevelCut =
+    if (surface.profile == null) insetCuts(g, surface, contours) else revolveCuts(g, surface, surface.profile, contours)
+
+/**
+ * Cross-sections of an inflated part. Height grows with distance from the outline, so a level is
+ * reached at a fixed inset: the field is the signed distance less that inset, which is the distance
+ * grid itself contoured at the inset.
+ */
+private fun insetCuts(g: Grid, surface: Surface, contours: Contours): LevelCut {
+    val whole = Field(g.sd, g.nx, g.ny, g.x0, g.y0, g.step)
+    val range = RunRange(g.sd, g.nx, g.ny)
+    val flat = BooleanArray(range.min.size)
+    return LevelCut { level, box ->
+        val drop = surface.insetAt(level)
+        if (box != null) return@LevelCut contours.outlines(boxField(g, drop, box), 0.0, TOLERANCE)
+        // Subtracting keeps order, so a run whose extremes are on one side of the inset is all on it.
+        for (k in flat.indices) flat[k] = range.min[k] - drop >= 0 || range.max[k] - drop < 0
+        contours.outlines(whole, drop, TOLERANCE, flat)
+    }
+}
+
+/** The inset field on a box's own samples plus one ring outside it, where the clip is negative. */
+private fun boxField(g: Grid, drop: Double, box: ThinBox): Field {
+    val i0 = max(0, box.i0 - 1)
+    val i1 = min(g.nx - 1, box.i1 + 1)
+    val j0 = max(0, box.j0 - 1)
+    val j1 = min(g.ny - 1, box.j1 + 1)
     val nx = i1 - i0 + 1
     val ny = j1 - j0 + 1
     val values = DoubleArray(nx * ny)
+    for (j in 0 until ny) for (i in 0 until nx) {
+        val sd = g.sd[(j + j0) * g.nx + i + i0]
+        val edge = minOf(minOf(i + i0 - box.i0, box.i1 - i - i0), minOf(j + j0 - box.j0, box.j1 - j - j0))
+        values[j * nx + i] = min(min(sd - drop, sd), g.step * edge)
+    }
+    return Field(values, nx, ny, g.x0 + i0 * g.step, g.y0 + j0 * g.step, g.step)
+}
+
+/**
+ * Cross-sections of a revolved part, which takes no boxes. With r the radius at a sample and t its
+ * offset from the axis, height >= level where t² <= r² - (level / v)²: that difference over twice
+ * the radius is about a distance, and it is the field.
+ */
+private fun revolveCuts(g: Grid, surface: Surface, profile: Profile, contours: Contours): LevelCut {
+    val nx = g.nx
+    val ny = g.ny
+    val alongX = surface.kind == PartKind.REVOLVE_X
+    // The field is (base - (level / v)²) / over: only the middle term changes with the level.
+    val base = DoubleArray(nx * ny)
+    val over = DoubleArray(nx * ny)
     for (j in 0 until ny) {
+        val y = g.y0 + j * g.step
         for (i in 0 until nx) {
-            val k = (j + j0) * g.nx + i + i0
-            val sd = g.sd[k]
-            // Both terms stay continuous across the outline, unlike the clipped surface height.
-            var v = min(field(g.x0 + (i + i0) * g.step, g.y0 + (j + j0) * g.step, sd, level), sd)
-            if (box != null) {
-                val edge = minOf(minOf(i + i0 - box.i0, box.i1 - i - i0), minOf(j + j0 - box.j0, box.j1 - j - j0))
-                v = min(v, g.step * edge)
-            }
-            values[j * nx + i] = v
+            val x = g.x0 + i * g.step
+            val r = profile.radiusAt(if (alongX) x else y)
+            val t = if (alongX) y - surface.axis else x - surface.axis
+            base[j * nx + i] = r * r - t * t
+            over[j * nx + i] = 2 * max(r, 0.5)
         }
     }
-    return contourLoops(Field(values, nx, ny, g.x0 + i0 * g.step, g.y0 + j0 * g.step, g.step), 0.0)
-        .map { simplifyLoop(it, 0.04) }
-        .filter { it.size >= 3 }
+    val values = DoubleArray(nx * ny)
+    val field = Field(values, nx, ny, g.x0, g.y0, g.step)
+    val rise = RunRange(base, nx, ny)
+    val edge = RunRange(g.sd, nx, ny)
+    val runs = runsOf(nx)
+    val flat = BooleanArray(rise.min.size)
+    return LevelCut { level, _ ->
+        val z = level / max(surface.v, 1e-6)
+        val drop = z * z
+        for (k in flat.indices) {
+            // Subtracting keeps order and `over` is positive, so the extremes of a run tell its sign.
+            val out = rise.max[k] - drop < 0 || edge.max[k] < 0
+            val within = rise.min[k] - drop >= 0 && edge.min[k] >= 0
+            flat[k] = out || within
+            if (flat[k]) continue
+            // Only runs the contour may cross are read, so only they are filled in.
+            val r = k % runs
+            val j = (k - r) / runs
+            for (q in j * nx + r * RUN..j * nx + min(nx - 1, (r + 1) * RUN)) {
+                values[q] = min((base[q] - drop) / over[q], g.sd[q])
+                values[q + nx] = min((base[q + nx] - drop) / over[q + nx], g.sd[q + nx])
+            }
+        }
+        contours.outlines(field, 0.0, TOLERANCE, flat)
+    }
 }
 
 internal fun thinBoxes(g: Grid): List<ThinBox> {
     val nx = g.nx
     val ny = g.ny
     val reach = ceil(THIN_REACH / g.step).toInt()
-    val rows = DoubleArray(nx * ny)
-    val widest = DoubleArray(nx * ny)
+    // Whether a sample THIN or more inside the outline lies within `reach` samples (a square window,
+    // rows then columns), from running counts.
+    val wide = BooleanArray(nx * ny)
+    val near = BooleanArray(nx * ny)
+    val count = IntArray(max(nx, ny) + 1)
     for (j in 0 until ny) {
-        for (i in 0 until nx) {
-            var m = 0.0
-            for (k in max(0, i - reach)..min(nx - 1, i + reach)) m = max(m, g.sd[j * nx + k])
-            rows[j * nx + i] = m
-        }
+        for (i in 0 until nx) count[i + 1] = count[i] + if (g.sd[j * nx + i] >= THIN) 1 else 0
+        for (i in 0 until nx) wide[j * nx + i] = count[min(nx, i + reach + 1)] > count[max(0, i - reach)]
     }
     for (i in 0 until nx) {
-        for (j in 0 until ny) {
-            var m = 0.0
-            for (k in max(0, j - reach)..min(ny - 1, j + reach)) m = max(m, rows[k * nx + i])
-            widest[j * nx + i] = m
-        }
+        for (j in 0 until ny) count[j + 1] = count[j] + if (wide[j * nx + i]) 1 else 0
+        for (j in 0 until ny) near[j * nx + i] = count[min(ny, j + reach + 1)] > count[max(0, j - reach)]
     }
-    fun thin(k: Int) = g.sd[k] > 0 && widest[k] < THIN
+    fun thin(k: Int) = g.sd[k] > 0 && !near[k]
     val seen = BooleanArray(nx * ny)
     val grow = ceil(THIN_MARGIN / g.step).toInt()
     val boxes = ArrayList<ThinBox>()
@@ -217,7 +243,12 @@ internal fun thinBoxes(g: Grid): List<ThinBox> {
     return boxes
 }
 
-internal fun columnLoops(g: Grid, c0: Int, c1: Int, edgeHeight: (Double, Double) -> Double): List<List<Point>> {
+/**
+ * The silhouette, seen from the side, of the slab of columns [c0]..[c1]: per run of rows inside the
+ * outline, its largest height, mirrored. Where a run meets the outline the profile ends at the
+ * surface height right there, not at the last sample's.
+ */
+internal fun columnLoops(g: Grid, c0: Int, c1: Int, surface: Surface, contours: Contours): List<List<Point>> {
     val loops = ArrayList<List<Point>>()
     val sd = DoubleArray(g.ny) { Double.NEGATIVE_INFINITY }
     val h = DoubleArray(g.ny)
@@ -228,12 +259,24 @@ internal fun columnLoops(g: Grid, c0: Int, c1: Int, edgeHeight: (Double, Double)
             if (g.sd[k] > 0 && g.h[k] > h[j]) h[j] = g.h[k]
         }
     }
-    fun yAt(j: Int) = g.y0 + j * g.step
-    fun edge(inside: Int, outside: Int) = yAt(inside) + ((yAt(outside) - yAt(inside)) * sd[inside]) / (sd[inside] - sd[outside])
-    fun rim(y: Double, j: Int): Double {
+    // One run of rows at a time: its right side (u, y in turn) from top to bottom, then the mirror image back up.
+    val xy = DoubleArray(4 * (g.ny + 2))
+    var n = 0
+    fun add(u: Double, y: Double) {
+        xy[n++] = u
+        xy[n++] = y
+    }
+    /** The end of a run: where the outline crosses between its last sample and the neighbor outside. */
+    fun addEnd(inside: Int, outside: Int) {
+        val yIn = g.y0 + inside * g.step
+        if (outside < 0 || outside >= g.ny) {
+            add(h[inside], yIn)
+            return
+        }
+        val y = yIn + ((g.y0 + outside * g.step - yIn) * sd[inside]) / (sd[inside] - sd[outside])
         var top = 0.0
-        for (c in c0..c1) top = max(top, edgeHeight(g.x0 + c * g.step, y))
-        return min(h[j], top)
+        for (c in c0..c1) top = max(top, surface.height(g.x0 + c * g.step, y, 0.0))
+        add(min(h[inside], top), y)
     }
     var j = 0
     while (j < g.ny) {
@@ -244,15 +287,14 @@ internal fun columnLoops(g: Grid, c0: Int, c1: Int, edgeHeight: (Double, Double)
         val j0 = j
         while (j < g.ny && sd[j] > 0) j++
         val j1 = j - 1
-        val yTop = if (j0 > 0) edge(j0, j0 - 1) else yAt(j0)
-        val yBot = if (j1 < g.ny - 1) edge(j1, j1 + 1) else yAt(j1)
-        val right = ArrayList<Point>()
-        right.add(Point(if (j0 > 0) rim(yTop, j0) else h[j0], yTop))
-        for (k in j0..j1) right.add(Point(h[k], yAt(k)))
-        right.add(Point(if (j1 < g.ny - 1) rim(yBot, j1) else h[j1], yBot))
-        if (right.maxOf { it.x } < 0.05) continue
-        val left = right.map { Point(-it.x, it.y) }.reversed()
-        loops.add(simplifyLoop(right + left, 0.04))
+        n = 0
+        addEnd(j0, j0 - 1)
+        for (k in j0..j1) add(h[k], g.y0 + k * g.step)
+        addEnd(j1, j1 + 1)
+        val points = n / 2
+        if ((0 until points).maxOf { xy[2 * it] } < 0.05) continue
+        for (k in points - 1 downTo 0) add(-xy[2 * k], xy[2 * k + 1])
+        loops.add(contours.simplified(xy, 0, 2 * points, TOLERANCE))
     }
     return loops
 }

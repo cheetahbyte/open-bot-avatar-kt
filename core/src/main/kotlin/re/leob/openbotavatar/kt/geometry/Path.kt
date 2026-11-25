@@ -1,14 +1,14 @@
 package re.leob.openbotavatar.kt.geometry
 
+import java.lang.StrictMath.acos
+import java.lang.StrictMath.atan2
+import java.lang.StrictMath.cos
+import java.lang.StrictMath.sin
 import kotlin.math.PI
 import kotlin.math.abs
-import kotlin.math.acos
-import kotlin.math.atan2
 import kotlin.math.ceil
-import kotlin.math.cos
 import kotlin.math.hypot
 import kotlin.math.max
-import kotlin.math.sin
 import kotlin.math.sqrt
 
 /**
@@ -62,7 +62,11 @@ private fun tokenize(d: String): List<Token> {
     return tokens
 }
 
-internal fun parsePath(d: String): List<Segment> {
+/**
+ * Parse and convert to absolute segments. Throws [PathError]. [bounded] rejects coordinates far
+ * outside the 0..100 viewBox; a mark's outline, drawn about its own center, is parsed without.
+ */
+internal fun parsePath(d: String, bounded: Boolean = true): List<Segment> {
     if (d.isBlank()) throw PathError("path is empty")
     if (d.length > PathLimits.MAX_CHARS) throw PathError("path longer than ${PathLimits.MAX_CHARS} characters")
     val tokens = tokenize(d)
@@ -190,7 +194,7 @@ internal fun parsePath(d: String): List<Segment> {
     }
     if (open) out.add(Segment.Close)
     if (subpaths > PathLimits.MAX_SUBPATHS) throw PathError("more than ${PathLimits.MAX_SUBPATHS} subpaths")
-    for (s in out) for (v in coordinates(s)) {
+    if (bounded) for (s in out) for (v in coordinates(s)) {
         if (v < PathLimits.COORD_MIN || v > PathLimits.COORD_MAX) {
             throw PathError("coordinate ${plain(v)} far outside the 0..100 viewBox")
         }
@@ -224,7 +228,11 @@ internal fun serializePath(segments: List<Segment>): String = buildString {
     }
 }
 
-/** Endpoint arc to sampled points (SVG implementation notes, F.6.5). */
+/**
+ * Endpoint arc to sampled points (SVG implementation notes, F.6.5). StrictMath gives
+ * upstream's bits where Math is off by one: the last bit of a point decides ties when a symmetric
+ * contour is simplified.
+ */
 private fun sampleArc(x0: Double, y0: Double, s: Segment.Arc, out: MutableList<Point>) {
     var rx = s.rx
     var ry = s.ry

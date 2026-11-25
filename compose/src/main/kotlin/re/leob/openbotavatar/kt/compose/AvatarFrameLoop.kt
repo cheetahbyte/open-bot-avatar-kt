@@ -7,7 +7,7 @@ import androidx.compose.runtime.withFrameNanos
 import kotlinx.coroutines.flow.first
 import re.leob.openbotavatar.kt.AvatarFrame
 import re.leob.openbotavatar.kt.AvatarMood
-import re.leob.openbotavatar.kt.AvatarState
+import re.leob.openbotavatar.kt.AvatarStateDefinition
 import re.leob.openbotavatar.kt.AvatarMotion
 import re.leob.openbotavatar.kt.AvatarPlayer
 import re.leob.openbotavatar.kt.AvatarView
@@ -16,7 +16,7 @@ import re.leob.openbotavatar.kt.PreparedAvatar
 
 internal data class LiveInput(
     val mood: AvatarMood?,
-    val state: AvatarState?,
+    val state: AvatarStateDefinition?,
     val motion: AvatarMotion?,
     val stateAge: Double?,
     val color: String,

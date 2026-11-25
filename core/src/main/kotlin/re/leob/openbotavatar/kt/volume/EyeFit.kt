@@ -1,9 +1,8 @@
 package re.leob.openbotavatar.kt.volume
 
 import re.leob.openbotavatar.kt.AvatarEyes
+import re.leob.openbotavatar.kt.geometry.EdgeBands
 import re.leob.openbotavatar.kt.geometry.Point
-import re.leob.openbotavatar.kt.geometry.Polygons
-import re.leob.openbotavatar.kt.geometry.isInside
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.max
@@ -79,31 +78,31 @@ private fun drawnEyeOutline(cx: Double, cy: Double, scale: Double, margin: Doubl
 internal fun eyeCenters(eyes: AvatarEyes): List<Point> =
     listOf(Point(eyes.x - eyes.spacing / 2, eyes.y), Point(eyes.x + eyes.spacing / 2, eyes.y))
 
-internal fun eyesFit(polys: Polygons, eyes: AvatarEyes, margin: Double): Point? {
+internal fun eyesFit(rows: EdgeBands, eyes: AvatarEyes, margin: Double): Point? {
     for (c in eyeCenters(eyes)) {
-        for (p in eyeOutline(c.x, c.y, eyes.scale, margin)) if (!isInside(polys, p.x, p.y)) return p
+        for (p in eyeOutline(c.x, c.y, eyes.scale, margin)) if (!rows.inside(p.x, p.y)) return p
     }
     return null
 }
 
-private fun drawnEyesFit(polys: Polygons, eyes: AvatarEyes, dx: Double, dy: Double, margin: Double): Boolean =
-    eyeCenters(eyes).all { c -> drawnEyeOutline(c.x + dx, c.y + dy, eyes.scale, margin).all { isInside(polys, it.x, it.y) } }
+private fun drawnEyesFit(rows: EdgeBands, eyes: AvatarEyes, dx: Double, dy: Double, margin: Double): Boolean =
+    eyeCenters(eyes).all { c -> drawnEyeOutline(c.x + dx, c.y + dy, eyes.scale, margin).all { rows.inside(it.x, it.y) } }
 
-internal fun gazeRange(polys: Polygons, eyes: AvatarEyes): GazeRange {
+internal fun gazeRange(rows: EdgeBands, eyes: AvatarEyes): GazeRange {
     fun reach(ux: Double, uy: Double): Double {
         for (k in doubleArrayOf(1.0, 0.8, 0.6, 0.4, 0.2)) {
             val dx = ux * k * GAZE_X * eyes.scale
             val dy = uy * k * GAZE_Y * eyes.scale
-            if (drawnEyesFit(polys, eyes, dx, dy, EYE_CLEARANCE)) return k
+            if (drawnEyesFit(rows, eyes, dx, dy, EYE_CLEARANCE)) return k
         }
         return 0.0
     }
     return GazeRange(reach(-1.0, 0.0), reach(1.0, 0.0), reach(0.0, -1.0), reach(0.0, 1.0))
 }
 
-internal fun boostedEyeScale(polys: Polygons, eyes: AvatarEyes): Double {
+internal fun boostedEyeScale(rows: EdgeBands, eyes: AvatarEyes): Double {
     for (k in doubleArrayOf(EYE_BOOST, 1.38, 1.3, 1.22, 1.15, 1.08)) {
-        if (drawnEyesFit(polys, eyes.copy(scale = eyes.scale * k), 0.0, 0.0, EYE_BOOST_PAD)) return eyes.scale * k
+        if (drawnEyesFit(rows, eyes.copy(scale = eyes.scale * k), 0.0, 0.0, EYE_BOOST_PAD)) return eyes.scale * k
     }
     return eyes.scale
 }

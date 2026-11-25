@@ -1,12 +1,12 @@
 package re.leob.openbotavatar.kt.volume
 
 import re.leob.openbotavatar.kt.geometry.Bounds
+import re.leob.openbotavatar.kt.geometry.EdgeBands
 import re.leob.openbotavatar.kt.geometry.Point
 import re.leob.openbotavatar.kt.geometry.Polygons
 import re.leob.openbotavatar.kt.geometry.bounds
 import re.leob.openbotavatar.kt.geometry.filledArea
 import re.leob.openbotavatar.kt.geometry.flattenPath
-import re.leob.openbotavatar.kt.geometry.insideRow
 import re.leob.openbotavatar.kt.geometry.parsePath
 import re.leob.openbotavatar.kt.geometry.sampleRange
 import re.leob.openbotavatar.kt.geometry.serializePath
@@ -16,6 +16,7 @@ import kotlin.math.floor
 internal class BodySubpath(
     val d: String,
     val polys: Polygons,
+    val rows: EdgeBands,
     /** A point inside the cut-out, on subpaths that cut a hole rather than adding fill. */
     val holeProbe: Point?,
 ) {
@@ -24,14 +25,16 @@ internal class BodySubpath(
 
 internal class BodyAnalysis(
     val polys: Polygons,
+    val rows: EdgeBands,
     val bounds: Bounds,
     val area: Int,
     val subpaths: List<BodySubpath>,
 )
 
-internal fun analyzeBody(path: String): BodyAnalysis {
-    val segments = parsePath(path)
+internal fun analyzeBody(path: String, bounded: Boolean = true): BodyAnalysis {
+    val segments = parsePath(path, bounded)
     val polys = flattenPath(segments)
+    val rows = EdgeBands(polys)
     val b = bounds(polys)
     val subpaths = ArrayList<BodySubpath>()
     for (sub in splitSubpaths(segments)) {
@@ -46,9 +49,10 @@ internal fun analyzeBody(path: String): BodyAnalysis {
         val xs = sampleRange(floor(ob.minX) + step / 2, ob.maxX, step)
         val mine = BooleanArray(xs.size)
         val all = BooleanArray(xs.size)
+        val ownRows = EdgeBands(own)
         for (y in sampleRange(floor(ob.minY) + step / 2, ob.maxY, step)) {
-            insideRow(own, y, xs, mine)
-            if (!alone) insideRow(polys, y, xs, all)
+            ownRows.insideRow(y, xs, mine)
+            if (!alone) rows.insideRow(y, xs, all)
             for (k in xs.indices) {
                 if (!mine[k]) continue
                 inside++
@@ -59,7 +63,7 @@ internal fun analyzeBody(path: String): BodyAnalysis {
             }
         }
         val hole = inside > 0 && cut.toDouble() / inside > 0.6
-        subpaths.add(BodySubpath(serializePath(sub), own, if (hole) cutProbe else null))
+        subpaths.add(BodySubpath(serializePath(sub), own, ownRows, if (hole) cutProbe else null))
     }
-    return BodyAnalysis(polys, b, filledArea(polys, b), subpaths)
+    return BodyAnalysis(polys, rows, b, filledArea(rows, b), subpaths)
 }

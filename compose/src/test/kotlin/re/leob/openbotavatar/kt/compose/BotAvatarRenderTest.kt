@@ -9,6 +9,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
@@ -17,11 +19,16 @@ import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.unit.dp
 import re.leob.openbotavatar.kt.AvatarCatalog
+import re.leob.openbotavatar.kt.AvatarMark
 import re.leob.openbotavatar.kt.AvatarMood
 import re.leob.openbotavatar.kt.AvatarState
+import re.leob.openbotavatar.kt.AvatarStateDefinition
 import re.leob.openbotavatar.kt.FrameOptions
 import re.leob.openbotavatar.kt.FrameShape
 import re.leob.openbotavatar.kt.AvatarView
+import re.leob.openbotavatar.kt.MarkPart
+import re.leob.openbotavatar.kt.PathBox
+import re.leob.openbotavatar.kt.PoseMark
 import re.leob.openbotavatar.kt.PreparedAvatar
 import java.io.File
 import kotlin.math.abs
@@ -214,6 +221,59 @@ class BotAvatarRenderTest {
         assertTrue(image.count(red) > 1000)
         assertTrue(image.count(Color.Black) > 300)
     }
+
+    @Test
+    fun aCustomStateShowsItsMarkAndLeavesAgain() {
+        val bar = AvatarMark("bar") { listOf(MarkPart("bar", "M-30 -8H30V8H-30Z", PathBox(-30.0, -8.0, 60.0, 16.0))) }
+        val asking = AvatarStateDefinition("asking") { it.base.copy(marks = listOf(PoseMark(bar, 1.0))) }
+        val state = mutableStateOf<AvatarStateDefinition>(AvatarState.IDLE)
+        rule.setContent {
+            BotAvatar(mug, Modifier.size(240.dp), color = red, eyeColor = Color.Black, state = state.value,
+                reducedMotion = AvatarReducedMotion.On)
+        }
+        val idle = capture("custom-idle")
+        assertTrue(idle.count(Color.Black) > 300)
+        rule.runOnUiThread { state.value = asking }
+        rule.mainClock.advanceTimeByFrame()
+        rule.waitForIdle()
+        val shown = capture("custom-asking")
+        assertEquals(0, shown.count(Color.Black))
+        val side = with(rule.density) { 240.dp.toPx() }
+        assertEquals(0.6f * 0.16f, shown.count(red) / (side * side), 0.01f)
+        rule.runOnUiThread { state.value = AvatarState.IDLE }
+        rule.mainClock.advanceTimeByFrame()
+        rule.waitForIdle()
+        assertTrue(capture("custom-back").sameAs(idle))
+    }
+
+    private fun showsAMaterial(still: Boolean) {
+        val blue = Color(0xFF2040E0)
+        val tile = Bitmap.createBitmap(8, 8, Bitmap.Config.ARGB_8888).apply { eraseColor(blue.toArgb()) }.asImageBitmap()
+        val finish = AvatarMaterial("tile") { shape, _, _, _ ->
+            val b = shape.bounds
+            MaterialImage(tile, (b.minX + b.maxX) / 2, (b.minY + b.maxY) / 2, 20.0)
+        }
+        val material = mutableStateOf<AvatarMaterial?>(null)
+        rule.setContent {
+            BotAvatar(mug, Modifier.size(240.dp), color = red, eyeColor = Color.Black, still = still, material = material.value)
+        }
+        val flat = capture("flat-$still")
+        assertTrue(flat.count(red) > 1000)
+        assertEquals(0, flat.count(blue))
+        rule.runOnUiThread { material.value = finish }
+        rule.mainClock.advanceTimeByFrame()
+        rule.waitForIdle()
+        val finished = capture("material-$still")
+        assertEquals(0, finished.count(red))
+        assertEquals(0, finished.count(Color.Black))
+        assertTrue(finished.count(blue) > 1000)
+    }
+
+    @Test
+    fun aMaterialPaintsTheBodyOfAStillAvatar() = showsAMaterial(still = true)
+
+    @Test
+    fun aMaterialPaintsTheBodyOfALiveAvatar() = showsAMaterial(still = false)
 
     @Test
     fun labelBecomesTheContentDescription() {

@@ -1,6 +1,7 @@
 package re.leob.openbotavatar.kt
 
 import re.leob.openbotavatar.kt.geometry.fixed
+import re.leob.openbotavatar.kt.volume.Volume
 
 /** 2D affine matrix in SVG order: x' = a x + c y + e, y' = b x + d y + f. */
 public data class AvatarMatrix(
@@ -102,6 +103,26 @@ public data class FramePath(
     val d: String,
     val evenOdd: Boolean,
     val box: PathBox,
+    /** A mark's part that is a circle or an upright capsule filling [box]. */
+    val round: Boolean = false,
+)
+
+/**
+ * An eye on the body's surface, in face coordinates: its mark where it rests, and how far its gaze
+ * has moved it from there. Apart, so a renderer can tell a moving eye from a changing one.
+ */
+public data class SurfaceEye(val mark: EyeMark, val dx: Double, val dy: Double)
+
+/** The body as one surface, for a renderer that draws it in 3D instead of as slices. */
+public data class FrameSurface(
+    val view: ViewBasis,
+    /** The body's scale as it gives way to a mark; 0 once it is gone. */
+    val scale: Double,
+    /** Both eyes, including one [AvatarFrame.shapes] leaves out because its spot faces away. Empty once the body is gone. */
+    val eyes: List<SurfaceEye>,
+    /** The model, the same one for every frame of a `PreparedAvatar`. Null at depth 0, which has no surface. */
+    @property:ExperimentalOpenBotAvatarApi
+    val volume: Volume?,
 )
 
 /**
@@ -117,4 +138,5 @@ public data class AvatarFrame(
     val root: AvatarMatrix,
     /** Back to front. */
     val shapes: List<FrameShape>,
+    val surface: FrameSurface,
 )

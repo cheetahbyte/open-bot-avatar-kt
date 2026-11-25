@@ -23,6 +23,9 @@ android {
 
 kotlin {
     explicitApi()
+    compilerOptions {
+        optIn.add("re.leob.openbotavatar.kt.ExperimentalOpenBotAvatarApi")
+    }
 }
 
 dependencies {

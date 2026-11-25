@@ -3,12 +3,83 @@ package re.leob.openbotavatar.kt
 import re.leob.openbotavatar.kt.geometry.*
 import kotlin.math.*
 
-private const val TAU = PI * 2
 private const val UNIT = 80 / 228.541
 private fun f(n: Double) = fixed(n, 2)
 private fun mix(a: Double, b: Double, u: Double) = a + (b - a) * u
 
+/** Directions a half turn is cut into for finding the edges a line through the center can cross. */
+private const val RIM_FANS = 180
+
 internal class Rim(val cx: Double, val cy: Double, val at: (Double) -> Double)
+
+/**
+ * How far [polys] reach from (cx, cy) along a direction (radians), either way, exactly.
+ *
+ * A line through the center only crosses the edges that span its direction as seen from there, so
+ * the edges are listed by the directions they span, with a fan to spare on either side, and a line
+ * is tested against the edges of its own fan. An edge left out lies a whole fan off the line, far
+ * more than the test's rounding, so it would not have counted: the answer is the same as from
+ * testing every edge.
+ */
+internal fun reachFinder(polys: Polygons, cx: Double, cy: Double): (Double) -> Double {
+    val count = polys.sumOf { it.size }
+    // x1, y1 and the edge vector, per edge.
+    val e = DoubleArray(4 * count)
+    // The fans each edge spans: first and how many more. Edges at the center span them all.
+    val first = IntArray(count)
+    val more = IntArray(count) { RIM_FANS - 1 }
+    val start = IntArray(RIM_FANS + 1)
+    var n = 0
+    forEachEdge(polys) { p, q ->
+        val k = n++
+        e[4 * k] = p.x
+        e[4 * k + 1] = p.y
+        e[4 * k + 2] = q.x - p.x
+        e[4 * k + 3] = q.y - p.y
+        val px = p.x - cx
+        val py = p.y - cy
+        val qx = q.x - cx
+        val qy = q.y - cy
+        // The turn from p to q about the center, the short way round.
+        val from = atan2(py, px)
+        val turn = atan2(px * qy - py * qx, px * qx + py * qy)
+        val lo = floor(min(from, from + turn) / PI * RIM_FANS) - 1
+        val hi = floor(max(from, from + turn) / PI * RIM_FANS) + 1
+        val near = px * px + py * py < 1e-6 || qx * qx + qy * qy < 1e-6 || abs(turn) > PI - 0.1
+        if (!near && hi - lo < RIM_FANS) {
+            first[k] = lo.toInt().mod(RIM_FANS)
+            more[k] = (hi - lo).toInt()
+        }
+        for (fan in 0..more[k]) start[(first[k] + fan) % RIM_FANS + 1]++
+    }
+    for (fan in 0 until RIM_FANS) start[fan + 1] += start[fan]
+    val items = IntArray(start[RIM_FANS])
+    val next = start.copyOf(RIM_FANS)
+    for (k in 0 until count) for (fan in 0..more[k]) items[next[(first[k] + fan) % RIM_FANS]++] = 4 * k
+
+    return { a ->
+        val ux = cos(a)
+        val uy = sin(a)
+        // The fan of the direction itself, so an angle of any size lands in the right one.
+        val turns = atan2(uy, ux) / PI
+        val fan = floor((turns - floor(turns)) * RIM_FANS)
+        // A direction that is in no fan (not a number) is tested against every edge.
+        val known = fan >= 0 && fan < RIM_FANS
+        var far = 0.0
+        for (q in (if (known) start[fan.toInt()] else 0) until (if (known) start[fan.toInt() + 1] else count)) {
+            val at = if (known) items[q] else 4 * q
+            val ex = e[at + 2]
+            val ey = e[at + 3]
+            val den = ux * ey - uy * ex
+            if (abs(den) < 1e-12) continue
+            // Where the line through the center crosses this edge: t along the line, s along the edge.
+            val t = ((e[at] - cx) * ey - (e[at + 1] - cy) * ex) / den
+            val s = ((e[at] - cx) * uy - (e[at + 1] - cy) * ux) / den
+            if (s >= 0 && s <= 1) far = max(far, abs(t))
+        }
+        far
+    }
+}
 
 /** Hoops follow the silhouette in every lean and stretch the state takes. */
 internal fun ribbonRims(polys: Polygons, b: Bounds): Pair<Rim, Rim> {
@@ -22,18 +93,7 @@ internal fun ribbonRims(polys: Polygons, b: Bounds): Pair<Rim, Rim> {
                 Point(cx + 1.01 * (lx - cx), cy + k * (ly - cy))
             } } }
         }
-        return Rim(cx, cy) { a ->
-            val ux = cos(a); val uy = sin(a); var far = 0.0
-            for (poly in outlines) for (i in poly.indices) {
-                val p = poly[i]; val q = poly[(i + 1) % poly.size]
-                val ex = q.x - p.x; val ey = q.y - p.y; val den = ux * ey - uy * ex
-                if (abs(den) < 1e-12) continue
-                val t = ((p.x - cx) * ey - (p.y - cy) * ex) / den
-                val s = ((p.x - cx) * uy - (p.y - cy) * ux) / den
-                if (s >= 0 && s <= 1) far = max(far, abs(t))
-            }
-            far
-        }
+        return Rim(cx, cy, reachFinder(outlines, cx, cy))
     }
     return posed(listOf(2.4, 4.5, 6.6), listOf(0.98, 1.0)) to posed(listOf(-1.7, 0.0, 1.7), listOf(0.99, 1.055))
 }
@@ -142,44 +202,36 @@ internal fun ribbonPieces(presence: Double, seed: Int, sweep: Double, cage: Doub
     return pieces
 }
 
-internal data class MarkPart(val shape: String, val d: String, val box: PathBox, val x: Double, val y: Double, val turn: Double, val scale: Double)
+/** A mark starts to grow at this weight, just before the body is gone, so something is always on screen. */
+private const val MARK_FROM = 0.45
 
-private fun circle(r: Double) = "M${f(r)} 0A${f(r)} ${f(r)} 0 1 1 ${f(-r)} 0A${f(r)} ${f(r)} 0 1 1 ${f(r)} 0Z"
-private fun capsule(w: Double, h: Double): String {
-    val r = w / 2; val y = h / 2 - r
-    return "M${f(-r)} ${f(-y)}A${f(r)} ${f(r)} 0 0 1 ${f(r)} ${f(-y)}L${f(r)} ${f(y)}A${f(r)} ${f(r)} 0 0 1 ${f(-r)} ${f(y)}Z"
+private fun grown(weight: Double) = smoothstep((clamp(weight, 0.0, 1.0) - MARK_FROM) / (1 - MARK_FROM))
+
+/** The unit every mark is sized in: a share of the body's smaller side, within limits that read at any size. */
+private fun markUnit(b: Bounds) = clamp(min(b.maxX - b.minX, b.maxY - b.minY), 34.0, 78.0)
+
+/**
+ * The parts of a pose's marks at one moment, placed on the body. A mark's weight 0..1 is how far the
+ * body has given way to it: the mark grows in as the body goes, from the body's center.
+ */
+internal fun markParts(b: Bounds, marks: List<PoseMark>, seed: Int, time: Double, still: Boolean): List<MarkPart> {
+    val cx = (b.minX + b.maxX) / 2
+    val cy = (b.minY + b.maxY) / 2
+    val ctx = MarkContext(markUnit(b), if (still) 0.0 else time + noise(seed, 9) * 10, still)
+    return marks.flatMap { (mark, weight) ->
+        val g = grown(weight)
+        if (g > 0) markPartsOf(mark.parts(ctx)).map { it.copy(x = cx + it.x * g, y = cy + it.y * g, scale = it.scale * g) } else emptyList()
+    }
 }
 
-internal fun markParts(b: Bounds, bang: Double, dots: Double, seed: Int, time: Double, still: Boolean): List<MarkPart> {
-    val cx = (b.minX + b.maxX) / 2; val cy = (b.minY + b.maxY) / 2
-    val u = clamp(min(b.maxX - b.minX, b.maxY - b.minY), 34.0, 78.0)
-    val t = if (still) 0.0 else time + noise(seed, 9) * 10
-    val parts = ArrayList<MarkPart>()
-    fun grown(w: Double) = smoothstep((clamp(w, 0.0, 1.0) - 0.45) / 0.55)
-    val gb = grown(bang)
-    if (gb > 0) {
-        val barW = 0.21 * u; val barH = 0.5 * u; val dot = 0.115 * u; val gap = 0.1 * u
-        val total = barH + gap + 2 * dot
-        val p = if (still) 1.0 else ((t % 2.6) + 2.6) % 2.6 / 2.6
-        val alarm = if (p < 0.3) p / 0.3 else 1.0
-        val jump = if (still) 0.0 else sin(PI * alarm)
-        val turn = if (still) 0.0 else 0.2 * sin(TAU * 3 * alarm) * (1 - alarm)
-        val lift = -0.09 * u * jump
-        val barY = -total / 2 + barH / 2; val dotY = total / 2 - dot
-        parts.add(MarkPart("bar", capsule(barW, barH), PathBox(-barW / 2, -barH / 2, barW, barH), cx, cy + (barY + lift) * gb, turn, gb))
-        parts.add(MarkPart("dot", circle(dot), PathBox(-dot, -dot, 2 * dot, 2 * dot), cx, cy + (dotY + lift * 0.45) * gb, turn, gb))
-    }
-    val gd = grown(dots)
-    if (gd > 0) {
-        val r = 0.1 * u; val step = 0.31 * u
-        for (i in 0..2) {
-            val p = if (still) 0.0 else (((t - i * 0.17) % 1.25) + 1.25) % 1.25 / 1.25
-            val hop = if (p < 0.4) sin(PI * (p / 0.4)) else 0.0
-            parts.add(MarkPart("dot3", circle(r), PathBox(-r, -r, 2 * r, 2 * r), cx + (i - 1) * step * gd,
-                cy - 0.16 * u * hop * gd, 0.0, gd * (1 + 0.12 * hop)))
-        }
-    }
-    return parts
+/**
+ * How much of its size the body keeps while it gives way to its marks: gone a little past half way.
+ * Several marks that each weigh too little to show (when a change between two is interrupted by a
+ * third) would leave nothing on screen: until one of them shows, the body stays as small as it is
+ * when a mark first does.
+ */
+internal fun bodyScale(marks: List<PoseMark>): Double {
+    fun left(weight: Double) = 1 - smoothstep(clamp(weight, 0.0, 1.0) / 0.55)
+    val scale = left(marks.sumOf { it.weight })
+    return if (marks.any { grown(it.weight) > 0 }) scale else max(scale, left(MARK_FROM))
 }
-
-internal fun bodyScale(bang: Double, dots: Double): Double = 1 - smoothstep(clamp(bang + dots, 0.0, 1.0) / 0.55)

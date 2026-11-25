@@ -34,7 +34,7 @@ public class AvatarPlayer {
         view: AvatarView? = null,
         reducedMotion: Boolean = false,
         size: Double,
-        state: AvatarState? = null,
+        state: AvatarStateDefinition? = null,
         motion: AvatarMotion? = null,
         stateAge: Double? = null,
         color: String? = null,

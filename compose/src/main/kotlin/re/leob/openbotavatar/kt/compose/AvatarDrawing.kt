@@ -18,18 +18,37 @@ import androidx.compose.ui.graphics.vector.PathParser
 import re.leob.openbotavatar.kt.AvatarFrame
 import re.leob.openbotavatar.kt.AvatarMatrix
 import re.leob.openbotavatar.kt.EyeMark
+import re.leob.openbotavatar.kt.FramePath
 import re.leob.openbotavatar.kt.FrameShape
 
 private const val MAX_SECTIONS = 4096
 
-/** Parsed cross-sections, by the frame's path ids: equal geometry and depth share them. Main thread only. */
-private val sections = LruCache<String, Path>(MAX_SECTIONS)
+/** A body at this share of its size or less is gone. */
+private const val GONE = 0.001
 
-private fun section(id: String, d: String, evenOdd: Boolean): Path =
-    sections[id] ?: PathParser().parsePathString(d).toPath().also {
-        it.fillType = if (evenOdd) PathFillType.EvenOdd else PathFillType.NonZero
-        sections.put(id, it)
-    }
+private class Section(val d: String, val path: Path)
+
+/** Parsed cross-sections, by the frame's path ids: equal geometry and depth share them. Main thread only. */
+private val sections = LruCache<String, Section>(MAX_SECTIONS)
+
+/** A mark's part may come with another outline under its id (a host's mark is its own code): then it is made anew. */
+private fun section(part: FramePath): Path {
+    sections[part.id]?.takeIf { it.d == part.d }?.let { return it.path }
+    val path = parsed(part.d)
+    path.fillType = if (part.evenOdd) PathFillType.EvenOdd else PathFillType.NonZero
+    sections.put(part.id, Section(part.d, path))
+    return path
+}
+
+/** An outline that is no path data, which only a host's mark can be, draws nothing. */
+private fun parsed(d: String): Path = try {
+    PathParser().parsePathString(d).toPath()
+} catch (_: IllegalArgumentException) {
+    Path()
+}
+
+/** The marks, which a frame lists as slices in place of the body. */
+private val FrameShape.Slice.isMark get() = key.startsWith("mark-")
 
 /** Where an avatar draws inside its layout bounds. */
 internal fun Rect.centeredSquare(): Rect = Rect(center, minDimension / 2)
@@ -41,25 +60,33 @@ internal class AvatarPainter {
         style = PaintingStyle.Stroke
         strokeCap = StrokeCap.Round
     }
+    private val imagePaint = Paint()
     private val arc = Path()
     private val dynamicParser = PathParser()
     private val matrix = Matrix()
 
-    fun paint(scope: DrawScope, frame: AvatarFrame, color: Color, eyeColor: Color) {
+    fun paint(scope: DrawScope, frame: AvatarFrame, color: Color, eyeColor: Color, material: AvatarMaterial?) {
         val square = Rect(Offset.Zero, scope.size).centeredSquare()
         if (square.isEmpty) return
+        val scale = square.width / 100f
         val paths = frame.paths.associateBy { it.id }
+        val body = material?.let { body(it, frame, color, eyeColor, scale) }
+        var bodyPainted = false
         scope.drawIntoCanvas { canvas ->
             for (shape in frame.shapes) {
+                if (body != null && shape is FrameShape.Eye) continue
+                // The body's slices follow one another: its image takes the place of the first, under the root's motion.
+                val inBody = body != null && shape is FrameShape.Slice && !shape.isMark
+                if (inBody && bodyPainted) continue
                 canvas.save()
-                place(frame.root * shape.matrix, square.topLeft, square.width / 100f)
+                place(if (inBody) frame.root else frame.root * shape.matrix, square.topLeft, scale)
                 canvas.concat(matrix)
                 when (shape) {
-                    is FrameShape.Slice -> {
-                        val path = paths.getValue(shape.path)
-                        fill.shader = null
-                        fill.color = color
-                        canvas.drawPath(section(path.id, path.d, path.evenOdd), fill)
+                    is FrameShape.Slice -> if (inBody) {
+                        bodyPainted = true
+                        image(canvas, body, body.cx, body.cy, body.radius * frame.surface.scale)
+                    } else {
+                        slice(canvas, paths.getValue(shape.path), color, material.takeIf { shape.isMark }, scale)
                     }
                     is FrameShape.Eye -> eye(canvas, shape.mark, eyeColor)
                     is FrameShape.Ribbon -> {
@@ -76,6 +103,33 @@ internal class AvatarPainter {
                 canvas.restore()
             }
         }
+    }
+
+    /** The whole body and its eyes as one image, unless it has shrunk away into a mark or has no surface. */
+    private fun body(material: AvatarMaterial, frame: AvatarFrame, color: Color, ink: Color, scale: Float): MaterialImage? {
+        val surface = frame.surface
+        val volume = surface.volume?.takeIf { surface.scale > GONE } ?: return null
+        return material.render(MaterialShape.Volume(volume), surface.view, MaterialLook(color, ink, surface.eyes), scale.toDouble())
+    }
+
+    /** One outline: in the material, where that can draw it, else as a plain fill. */
+    private fun slice(canvas: Canvas, path: FramePath, color: Color, material: AvatarMaterial?, scale: Float) {
+        val sprite = material?.let { markSprite(it, path, scale.toDouble(), color) }
+        if (sprite != null) {
+            image(canvas, sprite.image, sprite.cx, sprite.cy, sprite.radius)
+            return
+        }
+        fill.shader = null
+        fill.color = color
+        canvas.drawPath(section(path), fill)
+    }
+
+    /** Draw an image over the square [radius] to each side of (cx, cy). */
+    private fun image(canvas: Canvas, image: MaterialImage, cx: Double, cy: Double, radius: Double) {
+        val unit = (2 * radius / image.size).toFloat()
+        canvas.translate((cx - radius).toFloat(), (cy - radius).toFloat())
+        canvas.scale(unit, unit)
+        canvas.drawImage(image.tile, Offset.Zero, imagePaint)
     }
 
     private fun place(m: AvatarMatrix, topLeft: Offset, scale: Float) {
@@ -129,7 +183,8 @@ internal class AvatarPainter {
  * Paint [frame] in the largest centered square of this scope. For custom hosts that compute frames
  * themselves. Pass the same body color into `FrameOptions.color` when computing the frame:
  * ribbon gradients are derived there, before painting. These Compose colors also preserve alpha.
+ * A [material] paints the body and the marks; without one, or where it returns null, they are flat.
  */
-public fun DrawScope.drawAvatarFrame(frame: AvatarFrame, color: Color, eyeColor: Color) {
-    AvatarPainter().paint(this, frame, color, eyeColor)
+public fun DrawScope.drawAvatarFrame(frame: AvatarFrame, color: Color, eyeColor: Color, material: AvatarMaterial? = null) {
+    AvatarPainter().paint(this, frame, color, eyeColor, material)
 }

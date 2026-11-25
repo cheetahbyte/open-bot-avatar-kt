@@ -41,8 +41,6 @@ public fun AvatarDefinition.toJson(): JsonObject = buildJsonObject {
     }
 }
 
-public enum class AvatarState { IDLE, THINKING, WORKING, WAITING, BLOCKED, DONE }
-
 public enum class AvatarMood {
     NEUTRAL,
     HAPPY,
@@ -53,10 +51,10 @@ public enum class AvatarMood {
 /** The legacy combined state and mood option. Explicit state and mood take precedence. */
 public enum class AvatarMotion { IDLE, THINKING, HAPPY }
 
-internal data class AvatarLook(val state: AvatarState, val mood: AvatarMood)
+internal data class AvatarLook(val state: AvatarStateDefinition, val mood: AvatarMood)
 
 @Suppress("DEPRECATION")
-internal fun resolveLook(state: AvatarState?, mood: AvatarMood?, motion: AvatarMotion? = null): AvatarLook {
+internal fun resolveLook(state: AvatarStateDefinition?, mood: AvatarMood?, motion: AvatarMotion? = null): AvatarLook {
     val legacy = motion ?: when (mood) {
         AvatarMood.THINKING -> AvatarMotion.THINKING
         AvatarMood.IDLE -> AvatarMotion.IDLE
@@ -84,7 +82,7 @@ public data class AvatarView(val yaw: Double, val pitch: Double)
 public data class MoodState(
     val mood: AvatarMood? = null,
     val blend: AvatarMoodBlend? = null,
-    val state: AvatarState? = null,
+    val state: AvatarStateDefinition? = null,
     /** Seconds the state had been showing when the next change began. */
     val age: Double? = null,
     val motion: AvatarMotion? = null,
@@ -107,7 +105,8 @@ public data class FrameOptions(
     val moodBlend: AvatarMoodBlend? = null,
     /** Freezes body motion and blinking at a calm pose; gaze still applies. */
     val reducedMotion: Boolean = false,
-    val state: AvatarState? = null,
+    /** One of the six states, or a definition of the host's own. */
+    val state: AvatarStateDefinition? = null,
     /** Seconds since the state began. Without it, DONE is at rest. */
     val stateAge: Double? = null,
     /** Legacy combined option; explicit state and mood win. */

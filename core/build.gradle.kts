@@ -13,6 +13,7 @@ kotlin {
     explicitApi()
     compilerOptions {
         jvmTarget = JvmTarget.JVM_17
+        optIn.add("re.leob.openbotavatar.kt.ExperimentalOpenBotAvatarApi")
     }
 }
 
